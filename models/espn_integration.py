@@ -1,117 +1,227 @@
 # models/espn_integration.py
-# Módulo de alto nivel: orquesta espn_api + espn_cache + espn_parser
-# y expone EXACTAMENTE la misma interfaz pública que tenía
-# models/api_football.py, para no romper nada en app.py.
-#
-# No requiere API key. Streamlit nunca debe importar espn_api ni
-# espn_parser directamente — solo este módulo.
+# Orquesta transporte, caché y parseo de ESPN sin alterar la base de datos.
 
+from datetime import datetime, timedelta
 from typing import Optional
-from models import espn_cache, espn_parser
+
+from models import espn_api, espn_cache, espn_parser
+
+
+TOURNAMENT_START = "20260611"
+TOURNAMENT_END = "20260719"
 
 
 def api_football_configured() -> bool:
-    """
-    Se mantiene el mismo nombre de función que usaba app.py para no
-    tener que tocar el resto del código. ESPN no requiere key, así
-    que esta función siempre devuelve True — la integración está
-    'configurada' por definición, no hay nada que el usuario deba
-    completar en .env para esta fuente de datos.
-    """
+    """ESPN no requiere API key."""
     return True
 
 
 def get_world_cup_fixtures() -> tuple[list[dict], str]:
-    """
-    Trae todos los partidos del Mundial 2026 (formato ya parseado,
-    listo para usar). Cacheado para no golpear ESPN repetidamente.
-    """
+    """Trae y parsea el calendario cacheado del Mundial 2026."""
     raw, msg = espn_cache.get_cached_scoreboard()
     if not raw:
         return [], msg
     fixtures = espn_parser.parse_scoreboard(raw)
-    return fixtures, f"✅ {len(fixtures)} partidos obtenidos de ESPN"
+    return fixtures, f"{len(fixtures)} partidos obtenidos de ESPN"
 
 
-def find_fixture_id(home_team: str, away_team: str, fixtures: Optional[list] = None) -> Optional[str]:
-    """Busca el fixture_id de un partido por nombre de equipos."""
+def find_fixture_id(
+    home_team: str,
+    away_team: str,
+    fixtures: Optional[list] = None,
+) -> Optional[str]:
+    """Busca el fixture_id por nombres de equipos."""
     if fixtures is None:
         fixtures, _ = get_world_cup_fixtures()
     match = espn_parser.find_fixture(home_team, away_team, fixtures)
     return match["fixture_id"] if match else None
 
 
-def get_fixture_statistics(fixture_id: str, home_team_name: str = "") -> tuple[Optional[dict], str]:
-    """
-    Trae estadísticas completas de un partido (remates, posesión,
-    tarjetas, etc.) ya mapeadas a los campos de tu base de datos.
-    """
+def get_fixture_statistics(
+    fixture_id: str,
+    home_team_name: str = "",
+) -> tuple[Optional[dict], str]:
+    """Trae las estadísticas mapeadas al formato de la app."""
     raw, msg = espn_cache.get_cached_summary(fixture_id)
     if not raw:
         return None, msg
     stats = espn_parser.parse_statistics(raw, home_team_name)
     if not stats:
-        return None, "ℹ️ Sin boxscore disponible para este partido todavía"
-    return stats, "✅ Estadísticas obtenidas"
+        return None, "Sin boxscore disponible para este partido todavía"
+    return stats, "Estadísticas obtenidas"
 
 
-def get_fixture_lineups(fixture_id: str, home_team_name: str = "") -> tuple[Optional[dict], str]:
-    """Trae formación de ambos equipos."""
+def get_fixture_lineups(
+    fixture_id: str,
+    home_team_name: str = "",
+) -> tuple[Optional[dict], str]:
+    """Trae las formaciones de ambos equipos."""
     raw, msg = espn_cache.get_cached_summary(fixture_id)
     if not raw:
         return None, msg
     lineups = espn_parser.parse_lineups(raw, home_team_name)
     if not lineups:
-        return None, "ℹ️ Sin alineaciones disponibles para este partido todavía"
-    return lineups, "✅ Alineaciones obtenidas"
+        return None, "Sin alineaciones disponibles para este partido todavía"
+    return lineups, "Alineaciones obtenidas"
 
 
-def get_full_match_data(home_team: str, away_team: str, fixtures: Optional[list] = None) -> tuple[Optional[dict], str]:
-    """
-    Función de alto nivel: dado el nombre de dos equipos, busca el
-    partido en ESPN y trae estadísticas + formación en un único dict
-    listo para pasarle directo a save_match_stats().
+def _search_range(match_date=None) -> tuple[str, str]:
+    """Usa ±3 días con fecha local o todo el torneo cuando no existe."""
+    if match_date:
+        raw_date = str(match_date).strip()
+        for value, fmt in (
+            (raw_date[:10], "%Y-%m-%d"),
+            (raw_date[:8], "%Y%m%d"),
+        ):
+            try:
+                parsed = datetime.strptime(value, fmt)
+                return (
+                    (parsed - timedelta(days=3)).strftime("%Y%m%d"),
+                    (parsed + timedelta(days=3)).strftime("%Y%m%d"),
+                )
+            except ValueError:
+                continue
+    return TOURNAMENT_START, TOURNAMENT_END
 
-    Mantiene la misma firma e interfaz que tenía la versión de
-    API-Football para no romper app.py.
-    """
+
+def _candidate_summary(candidate: dict) -> str:
+    score = ""
+    if candidate.get("home_goals") is not None:
+        score = f" {candidate['home_goals']}-{candidate['away_goals']}"
+    date = str(candidate.get("date") or "sin fecha")[:10]
+    return (
+        f"ID {candidate.get('fixture_id')} | {date} | "
+        f"{candidate.get('home_team')} vs {candidate.get('away_team')}{score} | "
+        f"{candidate.get('round') or 'fase sin informar'} | "
+        f"{candidate.get('status')} | similitud "
+        f"{candidate.get('similarity', 0):.0%}"
+    )
+
+
+def find_espn_event_for_match(
+    home_team: str,
+    away_team: str,
+    match_date=None,
+    phase: Optional[str] = None,
+    fixtures: Optional[list] = None,
+) -> dict:
+    """Busca el evento y devuelve diagnóstico y candidatos si no coincide."""
     if fixtures is None:
-        fixtures, fetch_msg = get_world_cup_fixtures()
-        if not fixtures:
-            return None, fetch_msg
+        initial_fixtures, _ = get_world_cup_fixtures()
+    else:
+        initial_fixtures = list(fixtures)
 
-    match = espn_parser.find_fixture(home_team, away_team, fixtures)
+    date_from, date_to = _search_range(match_date)
+    match = espn_parser.find_fixture(
+        home_team, away_team, initial_fixtures
+    )
+    if match:
+        return {
+            "event": match,
+            "candidates": [],
+            "range": (date_from, date_to),
+            "events_found": len(initial_fixtures),
+            "phase": phase,
+        }
+
+    # El rango largo puede ser parcial en ESPN. El respaldo por día recorre
+    # grupos y todas las fases KO sin depender de la jornada actual.
+    raw, fetch_message = espn_api.fetch_scoreboards_by_day(
+        date_from, date_to
+    )
+    dated_fixtures = espn_parser.parse_scoreboard(raw or {})
+
+    combined = {}
+    for fixture in initial_fixtures + dated_fixtures:
+        key = fixture.get("fixture_id") or (
+            fixture.get("date"),
+            fixture.get("home_team"),
+            fixture.get("away_team"),
+        )
+        combined[key] = fixture
+    all_fixtures = list(combined.values())
+
+    match = espn_parser.find_fixture(home_team, away_team, all_fixtures)
+    candidates = espn_parser.closest_fixtures(
+        home_team, away_team, all_fixtures
+    )
+    return {
+        "event": match,
+        "candidates": candidates,
+        "range": (date_from, date_to),
+        "events_found": len(all_fixtures),
+        "phase": phase,
+        "fetch_message": fetch_message,
+    }
+
+
+def get_full_match_data(
+    home_team: str,
+    away_team: str,
+    fixtures: Optional[list] = None,
+    match_date=None,
+    phase: Optional[str] = None,
+) -> tuple[Optional[dict], str]:
+    """Busca el evento y obtiene estadísticas y formaciones."""
+    search = find_espn_event_for_match(
+        home_team,
+        away_team,
+        match_date=match_date,
+        phase=phase,
+        fixtures=fixtures,
+    )
+    match = search["event"]
+
     if not match:
+        date_from, date_to = search["range"]
+        candidates = search.get("candidates") or []
+        candidate_text = ""
+        if candidates:
+            candidate_text = "\n\nCandidatos cercanos:\n" + "\n".join(
+                f"- {_candidate_summary(candidate)}"
+                for candidate in candidates
+            )
         return None, (
-            f"❌ No se encontró el partido {home_team} vs {away_team} en ESPN. "
-            f"Puede ser una diferencia de nombre (revisá TEAM_NAME_ALIASES "
-            f"en espn_parser.py) o que el partido todavía no esté en el calendario."
+            f"No se encontró el partido {home_team} vs {away_team} en ESPN. "
+            f"Rango consultado: {date_from}–{date_to}. "
+            f"Eventos encontrados: {search['events_found']}."
+            f"{candidate_text}"
         )
 
     fixture_id = match["fixture_id"]
-    status     = match["status"]
+    status = match["status"]
+    date_from, date_to = search["range"]
+    diagnostic = (
+        f"Rango consultado: {date_from}–{date_to}. "
+        f"Eventos encontrados: {search['events_found']}."
+    )
 
     if status == "NS":
         return None, (
-            f"ℹ️ El partido {home_team} vs {away_team} todavía no se jugó. "
-            f"Las estadísticas estarán disponibles cuando termine."
+            f"El partido {home_team} vs {away_team} fue encontrado en ESPN "
+            f"(ID {fixture_id}), pero todavía está pendiente y no tiene "
+            f"estadísticas disponibles. {diagnostic}"
         )
 
     stats, stats_msg = get_fixture_statistics(fixture_id, home_team)
     if not stats:
-        return None, f"⚠️ Partido encontrado pero sin estadísticas todavía. {stats_msg}"
+        return None, (
+            "El partido fue encontrado, pero ESPN no tiene "
+            f"boxscore/statistics disponibles todavía. {stats_msg}. "
+            f"{diagnostic}"
+        )
 
     lineups, _ = get_fixture_lineups(fixture_id, home_team)
     if lineups:
         stats.update(lineups)
 
-    return stats, f"✅ Datos completos de {home_team} vs {away_team} obtenidos de ESPN"
+    return (
+        stats,
+        f"Datos completos de {home_team} vs {away_team} obtenidos de ESPN. "
+        f"{diagnostic}",
+    )
 
 
 def get_remaining_requests() -> str:
-    """
-    ESPN no tiene límite de requests documentado ni key, así que esta
-    función solo existe para mantener compatibilidad con el código que
-    ya mostraba este mensaje en el sidebar/UI.
-    """
-    return "✅ ESPN (sin límite de requests, no requiere key)"
+    """Compatibilidad con la interfaz anterior."""
+    return "ESPN (sin API key)"

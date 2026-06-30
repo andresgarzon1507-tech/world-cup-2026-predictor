@@ -10,6 +10,8 @@
 # Si ESPN cambia su formato, ajustá solo este archivo — el resto de
 # la app nunca debería enterarse.
 
+from difflib import SequenceMatcher
+import re
 from typing import Optional
 import unicodedata
 
@@ -38,6 +40,8 @@ TEAM_NAME_ALIASES = {
     "costa de marfil":       "ivory coast",
     "croacia":               "croatia",
     "curazao":               "curacao",
+    "cura ao":               "curacao",
+    "curaa ao":              "curacao",
     "egipto":                "egypt",
     "escocia":               "scotland",
     "espana":                "spain",
@@ -66,14 +70,23 @@ TEAM_NAME_ALIASES = {
     "tunez":                 "tunisia",
     "uruguay":               "uruguay",
     "uzbekistan":            "uzbekistan",
+    # Códigos FIFA y abreviaturas habituales de ESPN.
+    "por":                    "portugal",
+    "col":                    "colombia",
+    "bra":                    "brazil",
+    "jpn":                    "japan",
+    "ger":                    "germany",
+    "deu":                    "germany",
+    "par":                    "paraguay",
 }
 
 
 def normalize_team_name(name: str) -> str:
-    """Quita acentos, pasa a minúsculas y resuelve alias conocidos."""
-    s = unicodedata.normalize("NFD", name)
+    """Quita acentos, uniforma espacios/signos y resuelve alias."""
+    s = unicodedata.normalize("NFD", str(name or ""))
     s = "".join(c for c in s if unicodedata.category(c) != "Mn")
-    s = s.lower().strip()
+    s = re.sub(r"[^a-z0-9]+", " ", s.lower()).strip()
+    s = " ".join(s.split())
     return TEAM_NAME_ALIASES.get(s, s)
 
 
@@ -87,6 +100,20 @@ def teams_match(name_a: str, name_b: str) -> bool:
 
 # Mapeo de estados ESPN -> estados que ya maneja el resto de tu app
 NOT_FINISHED_STATES = {"STATUS_SCHEDULED", "STATUS_POSTPONED", "STATUS_CANCELED"}
+
+
+def _competitor_team_names(competitor: dict) -> list[str]:
+    """Nombres largo/corto, slug y código FIFA informados por ESPN."""
+    team = competitor.get("team", {})
+    values = [
+        team.get("displayName"),
+        team.get("shortDisplayName"),
+        team.get("name"),
+        team.get("location"),
+        team.get("abbreviation"),
+        team.get("slug"),
+    ]
+    return list(dict.fromkeys(value for value in values if value))
 
 
 def parse_scoreboard(raw: dict) -> list[dict]:
@@ -116,13 +143,36 @@ def parse_scoreboard(raw: dict) -> list[dict]:
             if not home or not away:
                 continue
 
+            home_names = _competitor_team_names(home)
+            away_names = _competitor_team_names(away)
+            notes = comp.get("notes") or []
+            competition_type = comp.get("type") or {}
+            type_text = (
+                competition_type.get("text", "")
+                if isinstance(competition_type, dict)
+                else str(competition_type)
+            )
+            note_text = (
+                notes[0].get("headline", "")
+                if notes and isinstance(notes[0], dict)
+                else ""
+            )
+            phase = (
+                type_text
+                or note_text
+                or comp.get("altGameNote", "")
+                or ev.get("season", {}).get("slug", "")
+            )
+
             fixtures.append({
                 "fixture_id":  ev.get("id"),
                 "date":        ev.get("date"),
                 "status":      "FT" if completed else ("NS" if status_name in NOT_FINISHED_STATES else "LIVE"),
-                "round":       ev.get("season", {}).get("slug", comp.get("altGameNote", "")),
-                "home_team":   home.get("team", {}).get("displayName", ""),
-                "away_team":   away.get("team", {}).get("displayName", ""),
+                "round":       phase,
+                "home_team":   home_names[0] if home_names else "",
+                "away_team":   away_names[0] if away_names else "",
+                "home_aliases": home_names,
+                "away_aliases": away_names,
                 "home_goals":  int(home["score"]) if home.get("score") not in (None, "") else None,
                 "away_goals":  int(away["score"]) if away.get("score") not in (None, "") else None,
             })
@@ -135,11 +185,61 @@ def parse_scoreboard(raw: dict) -> list[dict]:
 
 
 def find_fixture(home_team: str, away_team: str, fixtures: list[dict]) -> Optional[dict]:
-    """Busca el fixture que coincide con los dos equipos dados."""
-    for f in fixtures:
-        if teams_match(home_team, f["home_team"]) and teams_match(away_team, f["away_team"]):
-            return f
+    """Busca el fixture usando nombres largos, cortos y códigos FIFA."""
+    for fixture in fixtures:
+        home_names = fixture.get("home_aliases") or [fixture.get("home_team", "")]
+        away_names = fixture.get("away_aliases") or [fixture.get("away_team", "")]
+        direct = (
+            any(teams_match(home_team, name) for name in home_names)
+            and any(teams_match(away_team, name) for name in away_names)
+        )
+        reverse = (
+            any(teams_match(home_team, name) for name in away_names)
+            and any(teams_match(away_team, name) for name in home_names)
+        )
+        if direct or reverse:
+            return fixture
     return None
+
+
+def fixture_similarity(home_team: str, away_team: str, fixture: dict) -> float:
+    """Puntúa de 0 a 1 qué tan parecido es un evento al partido buscado."""
+    def best(local_name, candidates):
+        local = normalize_team_name(local_name)
+        return max(
+            (
+                SequenceMatcher(None, local, normalize_team_name(name)).ratio()
+                for name in candidates if name
+            ),
+            default=0.0,
+        )
+
+    home_names = fixture.get("home_aliases") or [fixture.get("home_team", "")]
+    away_names = fixture.get("away_aliases") or [fixture.get("away_team", "")]
+    direct = (best(home_team, home_names) + best(away_team, away_names)) / 2
+    reverse = (best(home_team, away_names) + best(away_team, home_names)) / 2
+    return max(direct, reverse)
+
+
+def closest_fixtures(
+    home_team: str,
+    away_team: str,
+    fixtures: list[dict],
+    limit: int = 5,
+) -> list[dict]:
+    """Devuelve los candidatos más cercanos con score de similitud."""
+    ranked = []
+    for fixture in fixtures:
+        candidate = dict(fixture)
+        candidate["similarity"] = fixture_similarity(
+            home_team, away_team, fixture
+        )
+        ranked.append(candidate)
+    return sorted(
+        ranked,
+        key=lambda item: item["similarity"],
+        reverse=True,
+    )[:limit]
 
 
 # ── Parseo de estadísticas (boxscore) ─────────────────────────────────────────
@@ -149,37 +249,49 @@ def find_fixture(home_team: str, away_team: str, fixtures: list[dict]) -> Option
 # puede variar entre "name", "label" o "abbreviation" según el deporte.
 STAT_FIELD_MAP = {
     "totalShots":      "shots",
+    "shotsTotal":      "shots",
     "shotsOnTarget":   "shots_on",
     "possessionPct":   "possession",
+    "possession":      "possession",
     "wonCorners":      "corners",
+    "corners":         "corners",
     "foulsCommitted":  "fouls",
+    "fouls":           "fouls",
     "yellowCards":     "yellows",
     "redCards":        "reds",
     "offsides":        "offsides",
     "totalPasses":     "passes",
+    "passes":          "passes",
     "passPct":         "pass_acc",
+    "passAccuracy":    "pass_acc",
 }
 
 
-def _extract_team_stats(team_block: dict) -> dict:
-    """
-    Extrae las estadísticas de un equipo desde un bloque del boxscore.
-    Soporta tanto el formato 'statistics' (lista de {name, displayValue})
-    visto en el scoreboard, como variantes con 'stats' o 'displayValue'.
-    """
-    result = {v: 0 for v in STAT_FIELD_MAP.values()}
+def _extract_team_stats(team_block: dict) -> tuple[dict, bool]:
+    """Extrae estadísticas y señala si ESPN informó alguna conocida."""
+    result = {value: 0 for value in STAT_FIELD_MAP.values()}
+    found_known = False
 
     stats_list = team_block.get("statistics", team_block.get("stats", []))
     for stat in stats_list:
-        name = stat.get("name") or stat.get("abbreviation") or ""
-        if name in STAT_FIELD_MAP:
-            field = STAT_FIELD_MAP[name]
-            raw_val = stat.get("displayValue", stat.get("value", 0))
-            try:
-                result[field] = float(raw_val)
-            except (ValueError, TypeError):
-                result[field] = 0
-    return result
+        name = (
+            stat.get("name")
+            or stat.get("label")
+            or stat.get("abbreviation")
+            or ""
+        )
+        if name not in STAT_FIELD_MAP:
+            continue
+
+        found_known = True
+        field = STAT_FIELD_MAP[name]
+        raw_value = stat.get("displayValue", stat.get("value", 0))
+        try:
+            cleaned = str(raw_value).replace("%", "").replace(",", "").strip()
+            result[field] = float(cleaned)
+        except (ValueError, TypeError):
+            result[field] = 0
+    return result, found_known
 
 
 def parse_statistics(summary_raw: dict, home_team_name: str) -> Optional[dict]:
@@ -191,12 +303,16 @@ def parse_statistics(summary_raw: dict, home_team_name: str) -> Optional[dict]:
     if not summary_raw:
         return None
 
-    # El boxscore puede venir directo, o anidado distinto según el deporte/liga.
-    boxscore = summary_raw.get("boxscore")
-    if not boxscore:
-        return None
-
+    # ESPN alterna entre boxscore.teams y header.competitions.competitors.
+    boxscore = summary_raw.get("boxscore") or {}
     teams_block = boxscore.get("teams", [])
+    if len(teams_block) < 2:
+        competitions = summary_raw.get("header", {}).get("competitions", [])
+        teams_block = (
+            competitions[0].get("competitors", [])
+            if competitions
+            else []
+        )
     if len(teams_block) < 2:
         return None
 
@@ -209,8 +325,10 @@ def parse_statistics(summary_raw: dict, home_team_name: str) -> Optional[dict]:
     else:
         home_block, away_block = teams_block[1], teams_block[0]
 
-    home_stats = _extract_team_stats(home_block)
-    away_stats = _extract_team_stats(away_block)
+    home_stats, home_has_stats = _extract_team_stats(home_block)
+    away_stats, away_has_stats = _extract_team_stats(away_block)
+    if not home_has_stats and not away_has_stats:
+        return None
 
     return {
         "home_shots":      int(home_stats["shots"]),

@@ -1,4 +1,9 @@
 # Base de datos local (no subir resultados cargados)
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+backups/
 worldcup2026.db
 worldcup2026.db-journal
 worldcup2026.db-wal

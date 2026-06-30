@@ -9,6 +9,8 @@
 # Si en el futuro ESPN cambia algo, este es el único archivo que debería
 # necesitar ajustes de URLs/parámetros — el parseo vive en espn_parser.py.
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timedelta
 from typing import Optional
 import requests
 
@@ -48,6 +50,57 @@ def fetch_scoreboard(date_from: str, date_to: str, limit: int = 200) -> tuple[Op
         "dates": f"{date_from}-{date_to}",
         "limit": limit,
     })
+
+
+def fetch_scoreboards_by_day(
+    date_from: str,
+    date_to: str,
+    limit: int = 100,
+) -> tuple[Optional[dict], str]:
+    """Consulta cada fecha y combina los eventos sin duplicarlos.
+
+    ESPN a veces entrega una vista parcial cuando `dates` contiene un rango
+    largo. Esta variante se usa como respaldo al buscar un partido concreto.
+    """
+    try:
+        start = datetime.strptime(date_from, "%Y%m%d").date()
+        end = datetime.strptime(date_to, "%Y%m%d").date()
+    except (TypeError, ValueError):
+        return None, "Rango de fechas ESPN inválido"
+
+    if end < start:
+        start, end = end, start
+
+    dates = []
+    current = start
+    while current <= end:
+        dates.append(current.strftime("%Y%m%d"))
+        current += timedelta(days=1)
+
+    events_by_id = {}
+    errors = 0
+
+    def fetch_day(day):
+        return day, _get("/scoreboard", {"dates": day, "limit": limit})
+
+    with ThreadPoolExecutor(max_workers=min(6, len(dates) or 1)) as pool:
+        futures = [pool.submit(fetch_day, day) for day in dates]
+        for future in as_completed(futures):
+            _, (raw, _) = future.result()
+            if not raw:
+                errors += 1
+                continue
+            for event in raw.get("events", []):
+                event_id = event.get("id")
+                if event_id:
+                    events_by_id[event_id] = event
+
+    if not events_by_id and errors:
+        return None, "ESPN no respondió para ninguna fecha del rango consultado"
+
+    return {"events": list(events_by_id.values())}, (
+        f"{len(events_by_id)} eventos ESPN entre {date_from} y {date_to}"
+    )
 
 
 def fetch_summary(event_id: str) -> tuple[Optional[dict], str]:

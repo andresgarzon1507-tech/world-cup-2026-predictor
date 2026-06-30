@@ -81,6 +81,39 @@ Las claves de servicios externos pueden configurarse mediante variables de entor
 
 La integración de cuotas nunca genera cuotas ficticias: si no hay proveedor configurado, el usuario debe introducir una cuota real para analizarla.
 
+## Publicar una actualización de datos
+
+La base SQLite permanece únicamente en tu PC. La aplicación pública consume
+una instantánea JSON versionada en `public_data/`.
+
+1. Ingresar en modo administrador y cargar los resultados localmente.
+2. Ejecutar la simulación Monte Carlo.
+3. Presionar **📤 Exportar datos públicos** en el sidebar.
+4. Revisar los archivos generados en `public_data/`.
+5. Publicar la instantánea:
+
+```bash
+git add public_data
+git commit -m "data: publish tournament update"
+git push
+```
+
+Streamlit Community Cloud detectará el nuevo commit y desplegará los datos
+actualizados. El botón de exportación no ejecuta comandos Git ni modifica la
+base de datos.
+
+Los archivos publicados son:
+
+- `metadata.json`: fecha de exportación y conteos generales.
+- `matches.json`: fixture y resultados cargados.
+- `predictions.json`: última salida disponible del modelo.
+- `standings.json`: tablas reales de grupos.
+- `bracket.json`: partidos KO guardados en SQLite, sin reconstrucciones.
+- `analyst_notes.json`: notas del analista exportadas.
+
+Si `public_data/` no existe todavía, la app continúa funcionando con su
+comportamiento local y no genera errores.
+
 ## Seguridad y datos locales
 
 Los siguientes archivos no deben subirse al repositorio:

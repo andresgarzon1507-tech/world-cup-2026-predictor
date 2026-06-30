@@ -20,6 +20,7 @@ from data.database import (
     save_match_stats, get_match_stats, get_all_match_stats,
     ensure_database_initialized,
 )
+from data.public_export import export_public_data, load_public_data
 from data.tournament_data import GROUPS, FLAGS, ALL_TEAMS, GROUP_LETTERS, HOST_TEAMS, R32_BRACKET_VALID, THIRD_PLACE_SLOTS
 from models.prediction_engine import (
     run_monte_carlo, match_probabilities_dc, over_under_probs,
@@ -36,6 +37,7 @@ from models.espn_integration import (
 
 # En Cloud no se versiona SQLite: inicializar esquema y fixture antes de leer.
 ensure_database_initialized()
+PUBLIC_SNAPSHOT = load_public_data()
 
 st.set_page_config(
     page_title="World Cup 2026 — Predictor",
@@ -120,18 +122,22 @@ input[type="number"] {
 
 # ─── SESSION STATE ────────────────────────────────────────────────────────────
 
-if "predictions" not in st.session_state:
-    # Intentar cargar última predicción de la DB
+if "local_predictions" not in st.session_state:
+    # Copia local separada: el modo público puede usar el snapshot JSON sin
+    # reemplazar la predicción de trabajo del administrador.
     latest = get_latest_prediction()
-    st.session_state.predictions = latest["results_json"] if latest else None
+    local_predictions = latest["results_json"] if latest else None
+    if (
+        local_predictions
+        and local_predictions.get("model_version") != "ko-aware-v1"
+    ):
+        local_predictions = None
+    st.session_state.local_predictions = local_predictions
 
-# Las predicciones anteriores no fijaban los resultados KO ya jugados.
-# Se descartan para evitar mostrar como candidato a un equipo eliminado.
-if (
-    st.session_state.predictions
-    and st.session_state.predictions.get("model_version") != "ko-aware-v1"
-):
-    st.session_state.predictions = None
+if "predictions" not in st.session_state:
+    st.session_state.predictions = st.session_state.local_predictions
+if "prediction_source" not in st.session_state:
+    st.session_state.prediction_source = "local"
 
 # ─── HELPERS ─────────────────────────────────────────────────────────────────
 
@@ -212,33 +218,95 @@ with st.sidebar:
     else:
         st.info("Modo público")
 
+    public_data = PUBLIC_SNAPSHOT if not IS_ADMIN else {}
+    public_predictions = public_data.get("predictions")
+    if (
+        not IS_ADMIN
+        and isinstance(public_predictions, dict)
+        and public_predictions.get("model_version") == "ko-aware-v1"
+    ):
+        st.session_state.predictions = public_predictions
+        st.session_state.prediction_source = "public"
+    elif IS_ADMIN and st.session_state.prediction_source == "public":
+        st.session_state.predictions = st.session_state.local_predictions
+        st.session_state.prediction_source = "local"
+
     st.divider()
 
-    all_matches = cached_all_matches(st.session_state.data_version)
-    played      = [m for m in all_matches if m["played"]]
-    total_matches = len(all_matches)
-
-    st.metric("Partidos jugados", f"{len(played)} / {total_matches}")
-    st.metric("Partidos restantes", f"{total_matches - len(played)}")
-
-    st.divider()
-
-    n_sims = st.select_slider(
-        "Simulaciones",
-        options=[1_000, 5_000, 10_000, 25_000],
-        value=10_000,
-        help="Más simulaciones = más preciso pero más lento"
+    database_matches = cached_all_matches(st.session_state.data_version)
+    snapshot_matches = public_data.get("matches")
+    all_matches = (
+        snapshot_matches
+        if isinstance(snapshot_matches, list) and snapshot_matches
+        else database_matches
+    )
+    played = [match for match in all_matches if match.get("played")]
+    public_metadata = public_data.get("metadata") or {}
+    played_count = int(
+        public_metadata.get("played_matches", len(played))
+    )
+    total_matches = int(
+        public_metadata.get("total_matches", len(all_matches))
+    )
+    remaining_matches = int(
+        public_metadata.get(
+            "remaining_matches",
+            total_matches - played_count,
+        )
     )
 
-    if st.button("▶ SIMULAR AHORA", use_container_width=True):
-        analyst_notes = get_all_analyst_notes()
-        with st.spinner(f"Ejecutando {n_sims:,} simulaciones..."):
-            all_stats = get_all_match_stats()
-            preds = run_monte_carlo(all_matches, analyst_notes, all_stats, n_sims)
-            st.session_state.predictions = preds
-            save_prediction(len(played), n_sims, preds)
-        st.success("✅ Completado")
-        st.rerun()
+    st.metric(
+        "Partidos jugados",
+        f"{played_count} / {total_matches}",
+    )
+    st.metric("Partidos restantes", f"{remaining_matches}")
+
+    st.divider()
+
+    if IS_ADMIN:
+        n_sims = st.select_slider(
+            "Simulaciones",
+            options=[1_000, 5_000, 10_000, 25_000],
+            value=10_000,
+            help="Más simulaciones = más preciso pero más lento",
+        )
+
+        if st.button("▶ SIMULAR AHORA", use_container_width=True):
+            analyst_notes = get_all_analyst_notes()
+            with st.spinner(f"Ejecutando {n_sims:,} simulaciones..."):
+                all_stats = get_all_match_stats()
+                preds = run_monte_carlo(
+                    all_matches,
+                    analyst_notes,
+                    all_stats,
+                    n_sims,
+                )
+                st.session_state.predictions = preds
+                st.session_state.local_predictions = preds
+                st.session_state.prediction_source = "local"
+                save_prediction(len(played), n_sims, preds)
+            st.success("✅ Completado")
+            st.rerun()
+
+        if st.button(
+            "📤 Exportar datos públicos",
+            use_container_width=True,
+        ):
+            try:
+                generated_files = export_public_data(
+                    st.session_state.predictions
+                )
+                st.success("Datos públicos exportados correctamente.")
+                st.code("\n".join(generated_files))
+            except Exception as exc:
+                st.error(f"No se pudo exportar: {exc}")
+    else:
+        public_metadata = public_data.get("metadata") or {}
+        n_sims = int(
+            (st.session_state.predictions or {}).get("simulations")
+            or public_metadata.get("simulations")
+            or 0
+        )
 
     st.divider()
     st.markdown("### 🏆 Top 5 favoritos")
@@ -260,6 +328,32 @@ with st.sidebar:
                 else:
                     st.info("No había duplicados")
                 st.rerun()
+
+
+def get_visible_ko_matches(phase):
+    """Fuente KO pública desde JSON; en admin conserva SQLite."""
+    if not IS_ADMIN:
+        public_bracket = public_data.get("bracket") or {}
+        phase_matches = public_bracket.get(phase)
+        if isinstance(phase_matches, list):
+            return [dict(match) for match in phase_matches]
+    return get_ko_matches(phase)
+
+
+def get_visible_analyst_notes():
+    """Normaliza las claves numéricas serializadas por JSON."""
+    if not IS_ADMIN:
+        notes = public_data.get("analyst_notes")
+        if isinstance(notes, dict):
+            normalized = {}
+            for match_id, note in notes.items():
+                try:
+                    match_id = int(match_id)
+                except (TypeError, ValueError):
+                    pass
+                normalized[match_id] = note
+            return normalized
+    return cached_all_analyst_notes(st.session_state.data_version)
 
 
 # ─── PORTADA ─────────────────────────────────────────────────────────────────
@@ -286,7 +380,19 @@ updated_values = [
     for m in all_matches
     if m.get("updated_at")
 ]
-last_update = max(updated_values)[:16].replace("T", " ") if updated_values else "Sin registro"
+public_generated_at = (
+    (public_data.get("metadata") or {}).get("generated_at")
+    if not IS_ADMIN
+    else None
+)
+if public_generated_at:
+    last_update = str(public_generated_at)[:16].replace("T", " ")
+else:
+    last_update = (
+        max(updated_values)[:16].replace("T", " ")
+        if updated_values
+        else "Sin registro"
+    )
 
 st.markdown(f"""
 <div class="hero-shell">
@@ -297,7 +403,7 @@ st.markdown(f"""
   </div>
   <div class="hero-metrics">
     <div class="hero-metric"><div class="hero-metric-label">Fase actual</div><div class="hero-metric-value">{current_phase}</div></div>
-    <div class="hero-metric"><div class="hero-metric-label">Partidos jugados</div><div class="hero-metric-value">{len(played)} / {total_matches}</div></div>
+    <div class="hero-metric"><div class="hero-metric-label">Partidos jugados</div><div class="hero-metric-value">{played_count} / {total_matches}</div></div>
     <div class="hero-metric"><div class="hero-metric-label">Simulaciones</div><div class="hero-metric-value">{n_sims:,}</div></div>
     <div class="hero-metric"><div class="hero-metric-label">Última actualización</div><div class="hero-metric-value">{last_update}</div></div>
   </div>
@@ -990,7 +1096,7 @@ with tab_bracket:
 
         r32_matches = {
             int(match.get("match_number")): match
-            for match in get_ko_matches("r32")
+            for match in get_visible_ko_matches("r32")
             if match.get("match_number") is not None
         }
 
@@ -1142,15 +1248,59 @@ def render_match_stats_card(m, phase_lbl):
         expanded=False
     ):
         api_prefix = f"api_{m['id']}"
+
+        def load_espn_data_into_widgets(data):
+            """Copia cada dato ESPN a la key real que usa su widget."""
+            direct_widget_fields = [
+                "home_shots", "away_shots",
+                "home_shots_on", "away_shots_on",
+                "home_possession", "away_possession",
+                "home_passes", "away_passes",
+                "home_pass_acc", "away_pass_acc",
+                "home_fouls", "away_fouls",
+                "home_yellows", "away_yellows",
+                "home_reds", "away_reds",
+                "home_offsides", "away_offsides",
+                "home_corners", "away_corners",
+            ]
+            for field in direct_widget_fields:
+                value = data.get(field)
+                if value is not None:
+                    st.session_state[f"{field}_{m['id']}"] = value
+
+            widget_key_map = {
+                "home_formation": f"hform_{m['id']}",
+                "away_formation": f"aform_{m['id']}",
+                "home_xg": f"hxg_{m['id']}",
+                "away_xg": f"axg_{m['id']}",
+            }
+            for field, widget_key in widget_key_map.items():
+                value = data.get(field)
+                if value is not None:
+                    st.session_state[widget_key] = value
+
         if st.button("📡 Traer datos de ESPN", key=f"apifetch_{m['id']}"):
             with st.spinner("Consultando ESPN..."):
-                data, msg = get_full_match_data(m["home_team"], m["away_team"])
+                data, msg = get_full_match_data(
+                    m["home_team"],
+                    m["away_team"],
+                    match_date=m.get("match_date"),
+                    phase=m.get("phase"),
+                )
             if data:
                 st.session_state[f"{api_prefix}_data"] = data
-                st.success(msg)
+                load_espn_data_into_widgets(data)
+                st.session_state[f"{api_prefix}_message"] = msg
                 st.rerun()
             else:
                 st.info(msg)
+
+        loaded_message = st.session_state.pop(
+            f"{api_prefix}_message",
+            None,
+        )
+        if loaded_message:
+            st.success(loaded_message)
 
         api_data = st.session_state.get(f"{api_prefix}_data", {})
 
@@ -1418,10 +1568,13 @@ with tab_value:
     if not preds:
         st.warning("⚠️ Ejecutá la simulación primero desde el panel izquierdo.")
     else:
-        played_m = cached_played_matches(st.session_state.data_version)
-        ratings  = compute_dynamic_ratings(played_m, cached_all_analyst_notes(st.session_state.data_version))
+        played_m = played
+        ratings = compute_dynamic_ratings(
+            played_m,
+            get_visible_analyst_notes(),
+        )
 
-        all_m    = get_all_matches()
+        all_m = all_matches
 
         group_pending = [
             m for m in all_m
@@ -1437,7 +1590,7 @@ with tab_value:
         }
         ko_pending = []
         for phase in ko_phases:
-            for m in get_ko_matches(phase):
+            for m in get_visible_ko_matches(phase):
                 if (not m["played"]
                     and m.get("home_team") and m.get("away_team")
                     and m["home_team"] not in ["","Por definir"]
@@ -1693,13 +1846,22 @@ with tab_value:
                             hide_index=True,
                             use_container_width=True,
                         )
-                        for vb in positive_vbs:
-                            save_value_bet(
-                                sel_m["id"], vb["market"], vb["market"],
-                                vb["model_prob"]/100, vb["impl_prob"]/100,
-                                vb["odd"], vb["edge"], vb["ev"], vb["kelly_25"]
+                        if IS_ADMIN:
+                            for vb in positive_vbs:
+                                save_value_bet(
+                                    sel_m["id"], vb["market"], vb["market"],
+                                    vb["model_prob"]/100,
+                                    vb["impl_prob"]/100,
+                                    vb["odd"], vb["edge"], vb["ev"],
+                                    vb["kelly_25"],
+                                )
+                            st.caption(
+                                "Resultado guardado en el historial local."
                             )
-                        st.caption("Resultado guardado en el historial local.")
+                        else:
+                            st.caption(
+                                "Cálculo público: no se guardaron cambios."
+                            )
                     else:
                         st.info(
                             f"No hay oportunidades con edge positivo "
