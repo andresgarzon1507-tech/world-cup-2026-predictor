@@ -8,11 +8,15 @@
 import sqlite3
 import os
 import json
+import threading
 from contextlib import contextmanager
 from datetime import datetime
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "..", "worldcup2026.db")
 DB_TIMEOUT = 10  # segundos antes de lanzar error por lock
+
+_INIT_LOCK = threading.Lock()
+_INITIALIZED_DB_PATH = None
 
 
 @contextmanager
@@ -141,6 +145,36 @@ def init_database():
             )
         """)
 
+        # ── Estadísticas detalladas ────────────────────────────────────────
+        # Mismo esquema utilizado históricamente por la migración de app.py.
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS match_stats (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                match_id INTEGER UNIQUE REFERENCES matches(id),
+                home_shots INTEGER, away_shots INTEGER,
+                home_shots_on INTEGER, away_shots_on INTEGER,
+                home_possession REAL, away_possession REAL,
+                home_passes INTEGER, away_passes INTEGER,
+                home_pass_acc REAL, away_pass_acc REAL,
+                home_fouls INTEGER, away_fouls INTEGER,
+                home_yellows INTEGER, away_yellows INTEGER,
+                home_reds INTEGER, away_reds INTEGER,
+                home_offsides INTEGER, away_offsides INTEGER,
+                home_corners INTEGER, away_corners INTEGER,
+                home_xg REAL, away_xg REAL,
+                home_formation TEXT, away_formation TEXT,
+                home_lineup TEXT DEFAULT '[]',
+                away_lineup TEXT DEFAULT '[]',
+                home_key_absences TEXT DEFAULT '[]',
+                away_key_absences TEXT DEFAULT '[]',
+                extra_notes TEXT DEFAULT '',
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        c.execute(
+            "CREATE INDEX IF NOT EXISTS idx_stats_match ON match_stats(match_id)"
+        )
+
         # ── Índices de performance ─────────────────────────────────────────
         c.execute("CREATE INDEX IF NOT EXISTS idx_matches_phase ON matches(phase)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_matches_played ON matches(played)")
@@ -187,40 +221,14 @@ def clear_match_result(match_id):
 
 
 def get_all_matches(phase=None):
-    try:
-        with get_db() as conn:
-            if phase:
-                rows = conn.execute(
-                    "SELECT * FROM matches WHERE phase=? ORDER BY match_number", (phase,)
-                ).fetchall()
-            else:
-                rows = conn.execute("""
-                    SELECT * FROM matches
-                    ORDER BY CASE phase
-                        WHEN 'groups' THEN 1
-                        WHEN 'r32' THEN 2
-                        WHEN 'r16' THEN 3
-                        WHEN 'qf' THEN 4
-                        WHEN 'sf' THEN 5
-                        WHEN 'third_place' THEN 6
-                        WHEN 'final' THEN 7
-                        ELSE 8
-                    END,
-                    match_number
-                """).fetchall()
-    except sqlite3.OperationalError as exc:
-        if "no such table: matches" in str(exc).lower():
-            return []
-        raise
-    return [dict(r) for r in rows]
-
-
-def get_played_matches():
-    try:
-        with get_db() as conn:
+    with get_db() as conn:
+        if phase:
+            rows = conn.execute(
+                "SELECT * FROM matches WHERE phase=? ORDER BY match_number", (phase,)
+            ).fetchall()
+        else:
             rows = conn.execute("""
                 SELECT * FROM matches
-                WHERE played=1
                 ORDER BY CASE phase
                     WHEN 'groups' THEN 1
                     WHEN 'r32' THEN 2
@@ -233,10 +241,26 @@ def get_played_matches():
                 END,
                 match_number
             """).fetchall()
-    except sqlite3.OperationalError as exc:
-        if "no such table: matches" in str(exc).lower():
-            return []
-        raise
+    return [dict(r) for r in rows]
+
+
+def get_played_matches():
+    with get_db() as conn:
+        rows = conn.execute("""
+            SELECT * FROM matches
+            WHERE played=1
+            ORDER BY CASE phase
+                WHEN 'groups' THEN 1
+                WHEN 'r32' THEN 2
+                WHEN 'r16' THEN 3
+                WHEN 'qf' THEN 4
+                WHEN 'sf' THEN 5
+                WHEN 'third_place' THEN 6
+                WHEN 'final' THEN 7
+                ELSE 8
+            END,
+            match_number
+        """).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -303,15 +327,10 @@ def save_prediction(matches_played, simulations, results_dict):
 
 
 def get_latest_prediction():
-    try:
-        with get_db() as conn:
-            row = conn.execute(
-                "SELECT * FROM predictions ORDER BY generated_at DESC LIMIT 1"
-            ).fetchone()
-    except sqlite3.OperationalError as exc:
-        if "no such table: predictions" in str(exc).lower():
-            return None
-        raise
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM predictions ORDER BY generated_at DESC LIMIT 1"
+        ).fetchone()
     if row:
         d = dict(row)
         d["results_json"] = json.loads(d["results_json"])
@@ -334,22 +353,13 @@ def save_value_bet(match_id, market, selection, model_prob,
 
 
 def get_value_bets_history():
-    try:
-        with get_db() as conn:
-            rows = conn.execute("""
-                SELECT vb.*, m.home_team, m.away_team, m.group_letter
-                FROM value_bets vb
-                JOIN matches m ON m.id = vb.match_id
-                ORDER BY vb.detected_at DESC
-            """).fetchall()
-    except sqlite3.OperationalError as exc:
-        message = str(exc).lower()
-        if (
-            "no such table: value_bets" in message
-            or "no such table: matches" in message
-        ):
-            return []
-        raise
+    with get_db() as conn:
+        rows = conn.execute("""
+            SELECT vb.*, m.home_team, m.away_team, m.group_letter
+            FROM value_bets vb
+            JOIN matches m ON m.id = vb.match_id
+            ORDER BY vb.detected_at DESC
+        """).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -395,6 +405,96 @@ def init_ko_matches():
                         "DELETE FROM matches WHERE id=?",
                         [(did,) for did in ids_to_delete]
                     )
+
+
+def _database_is_ready():
+    """Comprueba esquema esencial y datos mínimos sin modificar la base."""
+    required_tables = {
+        "teams",
+        "matches",
+        "analyst_notes",
+        "predictions",
+        "odds",
+        "value_bets",
+        "match_stats",
+    }
+    try:
+        conn = sqlite3.connect(DB_PATH, timeout=DB_TIMEOUT)
+        existing_tables = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        if not required_tables.issubset(existing_tables):
+            return False
+
+        team_count = conn.execute("SELECT COUNT(*) FROM teams").fetchone()[0]
+        group_match_count = conn.execute(
+            "SELECT COUNT(*) FROM matches WHERE phase='groups'"
+        ).fetchone()[0]
+        return team_count >= 48 and group_match_count >= 72
+    except sqlite3.Error:
+        return False
+    finally:
+        if "conn" in locals():
+            conn.close()
+
+
+def ensure_database_initialized():
+    """
+    Inicializa esquema, equipos y fixture una sola vez cuando la base está vacía.
+
+    Es idempotente: si la base local ya contiene las tablas y datos mínimos,
+    no ejecuta escrituras. Reutiliza exactamente las funciones de setup.py.
+    """
+    global _INITIALIZED_DB_PATH
+
+    normalized_path = os.path.abspath(DB_PATH)
+    if (
+        _INITIALIZED_DB_PATH == normalized_path
+        and _database_is_ready()
+    ):
+        return False
+
+    with _INIT_LOCK:
+        if _database_is_ready():
+            _INITIALIZED_DB_PATH = normalized_path
+            return False
+
+        from data.tournament_data import (
+            FIFA_RATINGS,
+            FLAGS,
+            GROUP_FIXTURES,
+            GROUPS,
+        )
+
+        init_database()
+
+        for group, teams in GROUPS.items():
+            for team in teams:
+                insert_team(
+                    name=team,
+                    flag=FLAGS.get(team, "🏳️"),
+                    group_letter=group,
+                    fifa_rating=FIFA_RATINGS.get(team, 0.5),
+                )
+
+        match_number = 1
+        for group, fixtures in GROUP_FIXTURES.items():
+            for home, away in fixtures:
+                insert_match(
+                    "groups",
+                    group,
+                    match_number,
+                    home,
+                    away,
+                )
+                match_number += 1
+
+        init_ko_matches()
+        _INITIALIZED_DB_PATH = normalized_path
+        return True
 
 
 def clean_ko_duplicates():

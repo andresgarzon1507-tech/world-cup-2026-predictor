@@ -18,6 +18,7 @@ from data.database import (
     init_ko_matches, get_ko_matches, update_ko_teams,
     save_ko_result, clear_ko_result, get_ko_winner, clean_ko_duplicates,
     save_match_stats, get_match_stats, get_all_match_stats,
+    ensure_database_initialized,
 )
 from data.tournament_data import GROUPS, FLAGS, ALL_TEAMS, GROUP_LETTERS, HOST_TEAMS, R32_BRACKET_VALID, THIRD_PLACE_SLOTS
 from models.prediction_engine import (
@@ -33,39 +34,8 @@ from models.espn_integration import (
 
 # ─── CONFIG ──────────────────────────────────────────────────────────────────
 
-# ── AUTO-MIGRACIÓN: crea tablas nuevas si no existen ─────────────────────────
-import sqlite3 as _sqlite3
-_DB_PATH = os.path.join(os.path.dirname(__file__), "worldcup2026.db")
-if os.path.exists(_DB_PATH):
-    _conn = _sqlite3.connect(_DB_PATH)
-    _conn.execute("PRAGMA journal_mode=WAL")
-    _conn.execute("""
-        CREATE TABLE IF NOT EXISTS match_stats (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            match_id INTEGER UNIQUE REFERENCES matches(id),
-            home_shots INTEGER, away_shots INTEGER,
-            home_shots_on INTEGER, away_shots_on INTEGER,
-            home_possession REAL, away_possession REAL,
-            home_passes INTEGER, away_passes INTEGER,
-            home_pass_acc REAL, away_pass_acc REAL,
-            home_fouls INTEGER, away_fouls INTEGER,
-            home_yellows INTEGER, away_yellows INTEGER,
-            home_reds INTEGER, away_reds INTEGER,
-            home_offsides INTEGER, away_offsides INTEGER,
-            home_corners INTEGER, away_corners INTEGER,
-            home_xg REAL, away_xg REAL,
-            home_formation TEXT, away_formation TEXT,
-            home_lineup TEXT DEFAULT '[]',
-            away_lineup TEXT DEFAULT '[]',
-            home_key_absences TEXT DEFAULT '[]',
-            away_key_absences TEXT DEFAULT '[]',
-            extra_notes TEXT DEFAULT '',
-            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    _conn.execute("CREATE INDEX IF NOT EXISTS idx_stats_match ON match_stats(match_id)")
-    _conn.commit()
-    _conn.close()
+# En Cloud no se versiona SQLite: inicializar esquema y fixture antes de leer.
+ensure_database_initialized()
 
 st.set_page_config(
     page_title="World Cup 2026 — Predictor",
