@@ -578,11 +578,23 @@ def run_monte_carlo(all_matches, analyst_notes=None, match_stats=None, n_sims=SI
         for match_number, (slot_a, slot_b) in enumerate(
             R32_BRACKET_VALID, start=1
         ):
+            stored_match = real_ko_matches["r32"].get(match_number) or {}
+            stored_home = stored_match.get("home_team")
+            stored_away = stored_match.get("away_team")
+            has_stored_fixture = (
+                stored_home not in (None, "", "Por definir")
+                and stored_away not in (None, "", "Por definir")
+            )
+
+            # La DB manda si el fixture ya fue guardado. Los slots oficiales
+            # solo se usan para partidos todavía no inicializados.
+            team_a = stored_home if has_stored_fixture else slots.get(slot_a)
+            team_b = stored_away if has_stored_fixture else slots.get(slot_b)
             w = real_or_simulated_winner(
                 "r32",
                 match_number,
-                slots.get(slot_a),
-                slots.get(slot_b),
+                team_a,
+                team_b,
             )
             r32w.append(w)
 

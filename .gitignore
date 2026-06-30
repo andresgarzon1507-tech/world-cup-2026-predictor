@@ -22,3 +22,6 @@ __pycache__/
 # Sistema
 .DS_Store
 Thumbs.db
+
+# Backups locales
+*_BACKUP_*.db

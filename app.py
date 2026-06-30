@@ -106,10 +106,44 @@ hr { border-color: #1c6b3f !important; }
 /* Inputs numéricos con acento azul cielo, como balón sobre césped */
 input[type="number"] {
     background-color: #ffffff !important;
-    color: #0d3d24 !important;
+    color:#0d3d24 !important;
     font-weight:700 !important;
-    border: 2px solid #3aa6ff !important;
-    border-radius: 6px !important;
+    border:2px solid #3aa6ff !important;
+    border-radius:6px !important;
+}
+.hero-shell {
+    padding:28px 30px 24px;
+    border:1px solid rgba(255,216,77,.35);
+    border-radius:18px;
+    background:
+      radial-gradient(circle at 92% 10%, rgba(58,166,255,.22), transparent 35%),
+      linear-gradient(135deg, rgba(4,25,16,.98), rgba(15,74,44,.92));
+    box-shadow:0 14px 40px rgba(0,0,0,.24);
+    margin-bottom:18px;
+}
+.hero-kicker { color:#8dd8ff; text-transform:uppercase; letter-spacing:2.2px; font-size:12px; font-weight:800; }
+.hero-title { color:#fff; font-size:clamp(28px,5vw,48px); line-height:1.05; font-weight:900; margin:8px 0; }
+.hero-title span { color:#ffd84d; }
+.hero-subtitle { color:#d9efe2; font-size:15px; max-width:760px; margin:0 0 20px; }
+.hero-metrics { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; }
+.hero-metric { background:rgba(255,255,255,.07); border:1px solid rgba(255,255,255,.10); border-radius:12px; padding:11px 13px; }
+.hero-metric-label { color:#9fc8ae; font-size:11px; text-transform:uppercase; letter-spacing:.7px; }
+.hero-metric-value { color:#fff; font-size:16px; font-weight:800; margin-top:3px; }
+.public-intro { background:rgba(58,166,255,.08); border-left:3px solid #3aa6ff; border-radius:0 10px 10px 0; padding:12px 15px; margin:4px 0 18px; color:#e3f3e8; }
+.bracket-card { background:rgba(5,30,19,.82); border:1px solid #1c6b3f; border-radius:14px; padding:15px 17px; margin:8px 0; min-height:150px; box-shadow:0 6px 18px rgba(0,0,0,.18); }
+.bracket-card.finalizado { border-color:#58c77b; }
+.bracket-card.pendiente { border-color:#d9b52f; }
+.match-top { display:flex; justify-content:space-between; gap:8px; align-items:center; margin-bottom:12px; }
+.match-number { color:#9fc8ae; font-size:12px; font-weight:700; }
+.status-pill { border-radius:999px; padding:4px 9px; font-size:10px; font-weight:900; letter-spacing:.5px; }
+.status-pill.finalizado { color:#baf4ca; background:rgba(88,199,123,.16); }
+.status-pill.pendiente { color:#ffe98b; background:rgba(217,181,47,.16); }
+.match-team { display:flex; justify-content:space-between; gap:12px; color:#fff; font-weight:750; padding:4px 0; }
+.match-score { color:#ffd84d; font-weight:900; }
+.match-foot { color:#a9cbb5; font-size:11px; margin-top:10px; border-top:1px solid rgba(255,255,255,.08); padding-top:9px; }
+@media (max-width:760px) {
+  .hero-shell { padding:22px 18px; }
+  .hero-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); }
 }
 </style>
 """, unsafe_allow_html=True)
@@ -258,14 +292,47 @@ with st.sidebar:
                 st.rerun()
 
 
-# ─── TÍTULO ──────────────────────────────────────────────────────────────────
+# ─── PORTADA ─────────────────────────────────────────────────────────────────
 
-st.markdown("# ⚽ WORLD CUP 2026 — PREDICTOR v2")
-col_a, col_b, col_c = st.columns(3)
-col_a.metric("Partidos jugados",   len(played))
-col_b.metric("Equipos",           48)
-col_c.metric("Simulaciones",      f"{n_sims:,}")
-st.divider()
+phase_targets = [
+    ("r32", 16, "Dieciseisavos / R32"),
+    ("r16", 8, "Octavos de final"),
+    ("qf", 4, "Cuartos de final"),
+    ("sf", 2, "Semifinales"),
+    ("final", 1, "Final"),
+]
+current_phase = "Dieciseisavos / R32"
+for phase_key, expected_matches, phase_label in phase_targets:
+    phase_matches = [m for m in all_matches if m.get("phase") == phase_key]
+    phase_played = sum(1 for m in phase_matches if m.get("played"))
+    current_phase = phase_label
+    if phase_played < expected_matches:
+        break
+else:
+    current_phase = "Torneo finalizado"
+
+updated_values = [
+    str(m.get("updated_at"))
+    for m in all_matches
+    if m.get("updated_at")
+]
+last_update = max(updated_values)[:16].replace("T", " ") if updated_values else "Sin registro"
+
+st.markdown(f"""
+<div class="hero-shell">
+  <div class="hero-kicker">Mundial FIFA 2026 · modelo actualizado</div>
+  <div class="hero-title">World Cup 2026 <span>Predictor</span></div>
+  <div class="hero-subtitle">
+    Simulador probabilístico con Monte Carlo, bracket dinámico y detección de value bets.
+  </div>
+  <div class="hero-metrics">
+    <div class="hero-metric"><div class="hero-metric-label">Fase actual</div><div class="hero-metric-value">{current_phase}</div></div>
+    <div class="hero-metric"><div class="hero-metric-label">Partidos jugados</div><div class="hero-metric-value">{len(played)} / {total_matches}</div></div>
+    <div class="hero-metric"><div class="hero-metric-label">Simulaciones</div><div class="hero-metric-value">{n_sims:,}</div></div>
+    <div class="hero-metric"><div class="hero-metric-label">Última actualización</div><div class="hero-metric-value">{last_update}</div></div>
+  </div>
+</div>
+""", unsafe_allow_html=True)
 
 # ─── TABS ────────────────────────────────────────────────────────────────────
 
@@ -424,16 +491,19 @@ if IS_ADMIN:
             if group_complete:
                 real_qualifiers[f"1{g}"] = {"team": ranked[0], "confirmed": True}
                 real_qualifiers[f"2{g}"] = {"team": ranked[1], "confirmed": True}
-            elif preds:
-                q = preds["predicted_qualifiers"].get(g, {})
-                real_qualifiers[f"1{g}"] = {"team": q.get("first",{}).get("team","?"), "confirmed": False, "predicted": True}
-                real_qualifiers[f"2{g}"] = {"team": q.get("second",{}).get("team","?"), "confirmed": False, "predicted": True}
-            elif len(gmatches) > 0:
-                real_qualifiers[f"1{g}"] = {"team": ranked[0], "confirmed": False, "predicted": False}
-                real_qualifiers[f"2{g}"] = {"team": ranked[1], "confirmed": False, "predicted": False}
             else:
-                real_qualifiers[f"1{g}"] = {"team": f"1° Grupo {g}", "confirmed": False, "predicted": False}
-                real_qualifiers[f"2{g}"] = {"team": f"2° Grupo {g}", "confirmed": False, "predicted": False}
+                # Un fixture oficial no se completa con probabilidades.
+                # Hasta que el grupo termine, el slot permanece sin resolver.
+                real_qualifiers[f"1{g}"] = {
+                    "team": f"1° Grupo {g}",
+                    "confirmed": False,
+                    "predicted": False,
+                }
+                real_qualifiers[f"2{g}"] = {
+                    "team": f"2° Grupo {g}",
+                    "confirmed": False,
+                    "predicted": False,
+                }
 
             if group_complete:
                 group_matches_g = [m for m in all_m if m["group_letter"]==g and m["played"]]
@@ -450,39 +520,23 @@ if IS_ADMIN:
                     else: tbl2[ht]["pts"]+=1; tbl2[at]["pts"]+=1
                 thirds_list.append({"team":ranked[2],"group":g,"pts":tbl2[ranked[2]]["pts"],
                                     "gd":tbl2[ranked[2]]["gd"],"gf":tbl2[ranked[2]]["gf"]})
-            elif preds:
-                gp = preds["group_probs"].get(g, [])
-                if gp:
-                    # Para completar grupos no terminados usamos la probabilidad de
-                    # entrar como MEJOR TERCERO, no la probabilidad total de clasificar.
-                    # Antes se elegía el 3.er equipo por "qualify", lo que podía poner
-                    # un segundo probable en un slot de tercero y desordenar los VS.
-                    third_pred = max(gp, key=lambda r: r.get("best_third", 0))
-                    thirds_list.append({
-                        "team": third_pred["team"], "group": g,
-                        "pts": 0, "gd": 0, "gf": 0,
-                        "predicted_prob": third_pred.get("best_third", 0),
-                    })
 
-        real_thirds      = [t for t in thirds_list if "predicted_prob" not in t]
-        predicted_thirds = [t for t in thirds_list if "predicted_prob" in t]
-        real_thirds.sort(key=lambda x:(x["pts"],x["gd"],x["gf"]), reverse=True)
-        predicted_thirds.sort(key=lambda x: x["predicted_prob"], reverse=True)
-        thirds_list = real_thirds + predicted_thirds
+        # Solo los terceros definidos por resultados reales pueden ocupar
+        # slots oficiales del fixture.
+        thirds_list.sort(
+            key=lambda x: (x["pts"], x["gd"], x["gf"]),
+            reverse=True,
+        )
 
         qualified_thirds = thirds_list[:8]
         assigned_groups = set()
         for slot_name, candidate_groups in THIRD_PLACE_SLOTS.items():
             for t in qualified_thirds:
                 if t["group"] in candidate_groups and t["group"] not in assigned_groups:
-                    all_candidates_done = all(
-                        sum(1 for m in all_m if m["group_letter"]==cg and m["played"]) == 6
-                        for cg in candidate_groups
-                    )
                     real_qualifiers[slot_name] = {
                         "team": t["team"],
-                        "confirmed": all_candidates_done,
-                        "predicted": "predicted_prob" in t,
+                        "confirmed": True,
+                        "predicted": False,
                     }
                     assigned_groups.add(t["group"])
                     break
@@ -520,8 +574,23 @@ if IS_ADMIN:
                 else:
                     ta, tb = m["home_team"], m["away_team"]
 
-                if ta and tb and (m["home_team"] != ta or m["away_team"] != tb):
-                    update_ko_teams(phase_key, i+1, ta, tb)
+                fixture_is_empty = (
+                    not m.get("home_team")
+                    and not m.get("away_team")
+                    and not m.get("played")
+                )
+                resolved_teams_are_real = (
+                    ta
+                    and tb
+                    and "Grupo" not in ta
+                    and "Grupo" not in tb
+                    and not ta.startswith("3-")
+                    and not tb.startswith("3-")
+                )
+                if fixture_is_empty and resolved_teams_are_real:
+                    # La DB es la fuente de verdad. Solo completamos filas vacías;
+                    # nunca reordenamos ni sobrescribimos un cruce ya guardado.
+                    update_ko_teams(phase_key, i + 1, ta, tb)
 
             ko_matches = get_ko_matches(phase_key)
 
@@ -599,28 +668,19 @@ if IS_ADMIN:
                                 st.caption(f"Modelo: {fp(home_t)} **{prob_h:.0f}%** vs {fp(away_t)} **{prob_a:.0f}%** *(basado en prob. de campeón)*")
 
         # ── RENDERIZAR TODAS LAS FASES ────────────────────────────────────────────
-        # ─── UN SOLO BOTÓN SEGURO ARRIBA DE LAS ELIMINATORIAS ──────────────────
-        if st.button("🔄 Sincronizar Nuevos Cruces Lógicos", use_container_width=True, key="sync_final_btn"):
-            with st.spinner("Reorganizando las llaves en la base de datos..."):
-                
-                # 1. Limpiamos la base de datos con tus funciones seguras
-                for phase_name, total_matches in [("r32", 16), ("r16", 8), ("qf", 4), ("sf", 2), ("final", 1)]:
-                    for match_idx in range(1, total_matches + 1):
-                        clear_ko_result(phase_name, match_idx)
-                
-                # 2. Volvemos a inicializar los partidos limpios
-                init_ko_matches()
-                bump_data_version()
-                
-                # 3. ¡EL TRUCO! Borramos el estado de la pantalla en Streamlit 
-                # para obligarlo a leer los nuevos 'vs' desde cero
-                keys_to_clear = [k for k in st.session_state.keys() if "r32" in k or "ko_" in k]
-                for key in keys_to_clear:
-                    del st.session_state[key]
-                
-                st.success("¡Estructura de llaves corregida con éxito! Tus grupos siguen guardados.")
-                st.rerun()
-        # ───────────────────────────────────────────────────────────────────────
+        # Inicialización no destructiva: crea únicamente filas KO faltantes.
+        if st.button(
+            "🔄 Completar filas KO faltantes",
+            use_container_width=True,
+            key="init_missing_ko_btn",
+        ):
+            init_ko_matches()
+            bump_data_version()
+            st.success(
+                "Estructura verificada sin borrar resultados ni modificar "
+                "cruces ya guardados."
+            )
+            st.rerun()
 
         render_ko_phase("r32",  "RONDA DE 32 — Dieciseisavos de Final", 16,
                         bracket_pairs=R32_BRACKET_VALID)
@@ -658,131 +718,63 @@ if IS_ADMIN:
 # ══════════════════════════════════════════════════════════════════════════════
 
 with tab_pred:
+    st.markdown(
+        '<div class="public-intro"><b>Panorama del torneo.</b> '
+        'Compará las probabilidades de cada selección para avanzar de ronda '
+        'y conquistar el título. Los resultados ya jugados se consideran definitivos.</div>',
+        unsafe_allow_html=True,
+    )
     preds = st.session_state.predictions
     if not preds:
-        st.info("Ejecutá la simulación para ver probabilidades completas.")
+        st.info("Ejecutá la simulación para ver el panorama completo del torneo.")
     else:
+        group_probs = preds.get("group_probs") or {}
+        phase_probs = preds.get("phase_probs") or {}
+        champion_probs = [
+            row for row in (preds.get("champion_probs") or [])
+            if isinstance(row, dict)
+            and row.get("team")
+            and row.get("prob") is not None
+        ]
+
         meta_parts = []
-        matches_played = preds.get("matches_played")
-        simulations = preds.get("simulations")
-        if matches_played is not None:
-            meta_parts.append(f"{matches_played} partidos jugados")
-        if simulations is not None:
-            meta_parts.append(f"{simulations:,} simulaciones")
-        ko_matches_played = preds.get("ko_matches_played")
-        if ko_matches_played is not None:
-            meta_parts.append(f"{ko_matches_played} eliminatorias fijadas")
+        if preds.get("matches_played") is not None:
+            meta_parts.append(f"{preds.get('matches_played')} partidos incorporados")
+        if preds.get("simulations") is not None:
+            meta_parts.append(f"{preds.get('simulations'):,} simulaciones")
+        if preds.get("ko_matches_played") is not None:
+            meta_parts.append(f"{preds.get('ko_matches_played')} resultados KO fijados")
         if meta_parts:
             st.caption(" · ".join(meta_parts))
 
-        group_probs = preds.get("group_probs") or {}
-        predicted_qualifiers = preds.get("predicted_qualifiers") or {}
-
-        st.markdown("### 🎯 Clasificados más probables por grupo")
-        cols = st.columns(4)
-        for i, g in enumerate(GROUP_LETTERS):
-            rows = group_probs.get(g) or []
-            q = predicted_qualifiers.get(g) or {}
-
-            first = q.get("first") or max(
-                rows, key=lambda row: row.get("first", 0), default={}
+        st.markdown("### 🏆 Top candidatos al título")
+        top_rows = [
+            {
+                "Posición": index,
+                "Equipo": fp(row["team"]),
+                "Campeón (%)": float(row["prob"]),
+                "Final (%)": float(
+                    (phase_probs.get(row["team"]) or {}).get("final", 0)
+                ),
+            }
+            for index, row in enumerate(champion_probs[:10], start=1)
+        ]
+        if top_rows:
+            top_df = pd.DataFrame(top_rows)
+            st.dataframe(
+                top_df.style.format({
+                    "Campeón (%)": "{:.1f}%",
+                    "Final (%)": "{:.1f}%",
+                }),
+                hide_index=True,
+                use_container_width=True,
             )
-            second = q.get("second") or max(
-                rows, key=lambda row: row.get("second", 0), default={}
-            )
 
-            with cols[i % 4]:
-                host = "🏠" if any(t in HOST_TEAMS for t in GROUPS[g]) else ""
-                st.markdown(f"**Grupo {g}** {host}")
-
-                if first.get("team"):
-                    first_prob = first.get("qualify", first.get("first", 0))
-                    st.markdown(f"🥇 {fp(first['team'])} `{first_prob}%`")
-                if second.get("team"):
-                    second_prob = second.get("qualify", second.get("second", 0))
-                    st.markdown(f"🥈 {fp(second['team'])} `{second_prob}%`")
-                if not first.get("team") and not second.get("team"):
-                    st.caption("Sin proyección disponible")
-                st.divider()
-
-        if group_probs:
-            st.markdown("### 📊 Probabilidades de clasificación por grupo")
-            group_rows = []
-            group_metrics = [
-                ("first", "1.º (%)"),
-                ("second", "2.º (%)"),
-                ("best_third", "Mejor 3.º (%)"),
-                ("qualify", "Clasifica (%)"),
-            ]
-            available_group_metrics = [
-                (key, label)
-                for key, label in group_metrics
-                if any(
-                    isinstance(row, dict) and row.get(key) is not None
-                    for rows in group_probs.values()
-                    for row in (rows or [])
-                )
-            ]
-
-            for g in GROUP_LETTERS:
-                for row in group_probs.get(g) or []:
-                    if not isinstance(row, dict) or not row.get("team"):
-                        continue
-                    display_row = {
-                        "Grupo": g,
-                        "Equipo": fp(row["team"]),
-                    }
-                    for key, label in available_group_metrics:
-                        display_row[label] = row.get(key)
-                    group_rows.append(display_row)
-
-            if group_rows:
-                st.dataframe(
-                    pd.DataFrame(group_rows),
-                    hide_index=True,
-                    use_container_width=True,
-                )
-
-            third_candidates = []
-            for g in GROUP_LETTERS:
-                rows = [
-                    row for row in (group_probs.get(g) or [])
-                    if isinstance(row, dict) and row.get("team")
-                ]
-                if not rows:
-                    continue
-                candidate = max(rows, key=lambda row: row.get("best_third", 0) or 0)
-                third_prob = candidate.get("best_third")
-                if third_prob is not None and third_prob > 0:
-                    third_candidates.append({
-                        "Grupo": g,
-                        "Equipo": fp(candidate["team"]),
-                        "Mejor 3.º (%)": third_prob,
-                        "Clasifica (%)": candidate.get("qualify"),
-                    })
-
-            if third_candidates:
-                third_candidates.sort(
-                    key=lambda row: row.get("Mejor 3.º (%)", 0),
-                    reverse=True,
-                )
-                third_slots = len(THIRD_PLACE_SLOTS)
-                st.markdown("### 🥉 Mejores terceros proyectados")
-                st.caption(
-                    "Ordenados por la probabilidad existente de clasificar como mejor tercero."
-                )
-                st.dataframe(
-                    pd.DataFrame(third_candidates[:third_slots]),
-                    hide_index=True,
-                    use_container_width=True,
-                )
-
-        phase_probs = preds.get("phase_probs") or {}
         phase_metrics = [
             ("r32", "R32 / Dieciseisavos (%)"),
             ("r16", "Octavos (%)"),
             ("qf", "Cuartos (%)"),
-            ("sf", "Semifinales (%)"),
+            ("sf", "Semis (%)"),
             ("final", "Final (%)"),
             ("champion", "Campeón (%)"),
         ]
@@ -795,7 +787,7 @@ with tab_pred:
             )
         ]
 
-        st.markdown("### 🏟️ Probabilidades de avance por fase")
+        st.markdown("### 📊 Probabilidades por fase")
         if available_phase_metrics:
             team_groups = {
                 team: group
@@ -806,75 +798,131 @@ with tab_pred:
             for team, metrics in phase_probs.items():
                 if not isinstance(metrics, dict):
                     continue
-                display_row = {
+                row = {
                     "Equipo": fp(team),
                     "Grupo": team_groups.get(team, "—"),
                 }
                 for key, label in available_phase_metrics:
-                    display_row[label] = metrics.get(key)
-                phase_rows.append(display_row)
+                    value = metrics.get(key)
+                    row[label] = float(value) if value is not None else None
+                phase_rows.append(row)
 
-            deepest_label = available_phase_metrics[-1][1]
+            sort_key, sort_label = (
+                next(
+                    ((key, label) for key, label in reversed(available_phase_metrics)
+                     if key == "champion"),
+                    available_phase_metrics[-1],
+                )
+            )
             phase_rows.sort(
-                key=lambda row: (
-                    row.get(deepest_label) is not None,
-                    row.get(deepest_label) or 0,
-                ),
+                key=lambda row: row.get(sort_label) or 0,
                 reverse=True,
             )
+            phase_df = pd.DataFrame(phase_rows)
+            percent_formats = {
+                label: "{:.1f}%"
+                for _, label in available_phase_metrics
+            }
             st.dataframe(
-                pd.DataFrame(phase_rows),
+                phase_df.style.format(percent_formats, na_rep="—"),
                 hide_index=True,
                 use_container_width=True,
+                height=620,
             )
         else:
             st.info(
-                "El modelo actual solo está guardando probabilidades de "
-                "clasificación de grupos. Para mostrar campeón, final y "
-                "semifinales hay que extender la salida del motor de simulación."
+                "La simulación disponible todavía no incluye probabilidades "
+                "de fases avanzadas."
             )
 
-        champion_probs = [
-            row for row in (preds.get("champion_probs") or [])
-            if isinstance(row, dict)
-            and row.get("team")
-            and row.get("prob") is not None
+        played_ko = [
+            m for m in all_matches
+            if m.get("phase") in {"r32", "r16", "qf", "sf", "final"}
+            and m.get("played")
         ]
-        if champion_probs:
-            st.markdown("### 🏆 Probabilidad de ser campeón")
-            df_champ = pd.DataFrame(champion_probs[:15])
-            df_champ["Equipo"] = df_champ["team"].apply(fp)
+        eliminated = set()
+        for match in played_ko:
+            home = match.get("home_team")
+            away = match.get("away_team")
+            hg = match.get("home_goals")
+            ag = match.get("away_goals")
+            if home and away and hg is not None and ag is not None and hg != ag:
+                eliminated.add(away if hg > ag else home)
 
-            fig = px.bar(
-                df_champ.head(12),
-                x="Equipo",
-                y="prob",
-                color="prob",
-                color_continuous_scale=[
-                    [0, "#0a3320"],
-                    [0.5, "#3aa6ff"],
-                    [1, "#ffd84d"],
-                ],
-                template="plotly_dark",
-                labels={"prob": "Probabilidad (%)"},
-                title="Top 12 — Probabilidad de ganar el Mundial 2026",
+        alive = [
+            team for team, metrics in phase_probs.items()
+            if isinstance(metrics, dict)
+            and (metrics.get("r32") or 0) > 0
+            and team not in eliminated
+        ]
+        alive.sort(
+            key=lambda team: (phase_probs.get(team) or {}).get("champion", 0),
+            reverse=True,
+        )
+        eliminated_sorted = sorted(
+            eliminated,
+            key=lambda team: (phase_probs.get(team) or {}).get("champion", 0),
+            reverse=True,
+        )
+
+        status_left, status_right = st.columns(2)
+        with status_left:
+            st.markdown("### ✅ Equipos que siguen vivos")
+            if alive:
+                alive_rows = [{
+                    "Equipo": fp(team),
+                    "Campeón (%)": float(
+                        (phase_probs.get(team) or {}).get("champion", 0)
+                    ),
+                } for team in alive]
+                st.dataframe(
+                    pd.DataFrame(alive_rows).style.format(
+                        {"Campeón (%)": "{:.1f}%"}
+                    ),
+                    hide_index=True,
+                    use_container_width=True,
+                    height=360,
+                )
+            else:
+                st.caption("Sin datos suficientes para determinarlo.")
+        with status_right:
+            st.markdown("### ⛔ Equipos eliminados")
+            if eliminated_sorted:
+                st.dataframe(
+                    pd.DataFrame({
+                        "Equipo": [fp(team) for team in eliminated_sorted]
+                    }),
+                    hide_index=True,
+                    use_container_width=True,
+                    height=360,
+                )
+            else:
+                st.caption("Todavía no hay eliminados registrados en KO.")
+
+        predicted_qualifiers = preds.get("predicted_qualifiers") or {}
+        if group_probs or predicted_qualifiers:
+            st.divider()
+            st.markdown("### 🎯 Resumen de la fase de grupos")
+            st.caption(
+                "Primeros, segundos y mejores terceros calculados a partir "
+                "de los resultados cargados."
             )
-            fig.update_layout(
-                plot_bgcolor="#0d3d24",
-                paper_bgcolor="#0d3d24",
-                font_color="#e3f3e8",
-                coloraxis_showscale=False,
-                xaxis_tickangle=-35,
-                title_font_color="#ffd84d",
-            )
-            st.plotly_chart(fig, use_container_width=True)
-            st.dataframe(
-                df_champ[["Equipo", "prob"]].rename(
-                    columns={"prob": "Prob (%)"}
-                ),
-                hide_index=True,
-                use_container_width=True,
-            )
+            cols = st.columns(4)
+            for i, group in enumerate(GROUP_LETTERS):
+                rows = group_probs.get(group) or []
+                projection = predicted_qualifiers.get(group) or {}
+                first = projection.get("first") or max(
+                    rows, key=lambda row: row.get("first", 0), default={}
+                )
+                second = projection.get("second") or max(
+                    rows, key=lambda row: row.get("second", 0), default={}
+                )
+                with cols[i % 4]:
+                    st.markdown(f"**Grupo {group}**")
+                    if first.get("team"):
+                        st.caption(f"🥇 {fp(first['team'])}")
+                    if second.get("team"):
+                        st.caption(f"🥈 {fp(second['team'])}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -882,115 +930,231 @@ with tab_pred:
 # ══════════════════════════════════════════════════════════════════════════════
 
 with tab_bracket:
+    st.markdown(
+        '<div class="public-intro"><b>Camino al campeón.</b> '
+        'Los partidos finalizados muestran su resultado real; los pendientes '
+        'muestran la probabilidad del modelo. La proyección se actualiza con '
+        'cada nueva simulación.</div>',
+        unsafe_allow_html=True,
+    )
     preds = st.session_state.predictions
     if not preds:
-        st.info("Ejecutá la simulación primero.")
+        st.info("Ejecutá la simulación para construir el bracket actualizado.")
     else:
-        st.markdown("### 🗺️ Bracket proyectado — Clasificados más probables")
-        st.caption("Basado en el clasificado con mayor probabilidad de cada slot")
+        group_probs = preds.get("group_probs") or {}
+        phase_probs = preds.get("phase_probs") or {}
+        ratings_used = preds.get("ratings_used") or {}
 
-        q = preds["predicted_qualifiers"]
-        
-        st.markdown("#### Dieciseisavos de Final — Cruces proyectados")
+        # Resolver slots exclusivamente con resultados reales de grupos.
+        # Las probabilidades nunca determinan el orden del fixture.
+        official_slots = {}
+        real_thirds = []
+        for group in GROUP_LETTERS:
+            group_matches = [
+                match for match in all_matches
+                if match.get("group_letter") == group
+                and match.get("played")
+            ]
+            if len(group_matches) != 6:
+                continue
 
-        def resolve_predicted_thirds(preds):
-            group_probs = preds.get("group_probs", {})
-            assigned = set()
-            resolved = {}
-            for slot_name, candidate_groups in THIRD_PLACE_SLOTS.items():
-                best_team, best_prob, best_group = None, -1, None
-                for cg in candidate_groups:
-                    if cg in assigned:
-                        continue
-                    rows = group_probs.get(cg, [])
-                    if len(rows) < 3:
-                        continue
-                    # El candidato correcto para un slot 3-XXXXX es el equipo
-                    # con mayor probabilidad de clasificar como MEJOR TERCERO.
-                    # No se debe usar "qualify", porque mezcla 1°, 2° y 3°.
-                    third = max(rows, key=lambda r: r.get("best_third", 0))
-                    prob = third.get("best_third", 0)
-                    if prob > best_prob:
-                        best_prob, best_team, best_group = prob, third["team"], cg
-                if best_team:
-                    resolved[slot_name] = best_team
-                    assigned.add(best_group)
-            return resolved
+            table = {
+                team: {"pts": 0, "gf": 0, "ga": 0, "gd": 0}
+                for team in GROUPS[group]
+            }
+            for match in group_matches:
+                home = match["home_team"]
+                away = match["away_team"]
+                home_goals = match["home_goals"]
+                away_goals = match["away_goals"]
+                table[home]["gf"] += home_goals
+                table[home]["ga"] += away_goals
+                table[away]["gf"] += away_goals
+                table[away]["ga"] += home_goals
+                table[home]["gd"] = table[home]["gf"] - table[home]["ga"]
+                table[away]["gd"] = table[away]["gf"] - table[away]["ga"]
+                if home_goals > away_goals:
+                    table[home]["pts"] += 3
+                elif home_goals < away_goals:
+                    table[away]["pts"] += 3
+                else:
+                    table[home]["pts"] += 1
+                    table[away]["pts"] += 1
 
-        predicted_thirds = resolve_predicted_thirds(preds)
+            ranked = sorted(
+                GROUPS[group],
+                key=lambda team: (
+                    table[team]["pts"],
+                    table[team]["gd"],
+                    table[team]["gf"],
+                ),
+                reverse=True,
+            )
+            official_slots[f"1{group}"] = ranked[0]
+            official_slots[f"2{group}"] = ranked[1]
+            third = ranked[2]
+            real_thirds.append({
+                "team": third,
+                "group": group,
+                **table[third],
+            })
 
-        def resolve_slot(slot, q):
-            if slot.startswith("1") and len(slot) == 2:
-                g = slot[1]
-                return q.get(g,{}).get("first",{}).get("team","?")
-            elif slot.startswith("2") and len(slot) == 2:
-                g = slot[1]
-                return q.get(g,{}).get("second",{}).get("team","?")
-            elif slot.startswith("3-"):
-                return predicted_thirds.get(slot, "Mejor 3°")
-            else:
-                return "?"
+        real_thirds.sort(
+            key=lambda row: (row["pts"], row["gd"], row["gf"]),
+            reverse=True,
+        )
+        qualified_thirds = real_thirds[:8]
+        assigned_third_groups = set()
+        for slot_name, candidate_groups in THIRD_PLACE_SLOTS.items():
+            for third in qualified_thirds:
+                if (
+                    third["group"] in candidate_groups
+                    and third["group"] not in assigned_third_groups
+                ):
+                    official_slots[slot_name] = third["team"]
+                    assigned_third_groups.add(third["group"])
+                    break
 
-        cols = st.columns(2)
-        for i, (sa, sb) in enumerate(R32_BRACKET_VALID):
-            ta = resolve_slot(sa, q)
-            tb = resolve_slot(sb, q)
-            ph = preds["phase_probs"]
-            prob_a = ph.get(ta,{}).get("champion",0) if ta not in ("?","Mejor 3°") else 0
-            prob_b = ph.get(tb,{}).get("champion",0) if tb not in ("?","Mejor 3°") else 0
-            fav    = ta if prob_a >= prob_b else tb
+        def resolve_slot(slot):
+            return official_slots.get(slot, slot)
 
-            with cols[i%2]:
-                st.markdown(
-                    f"**Partido {i+1}** `{sa} vs {sb}`\n\n"
-                    f"{fp(ta) if ta!='?' else ta} vs {fp(tb) if tb!='?' else tb} "
-                    f"— Favorito: **{fp(fav) if fav!='?' else '?'}**"
+        r32_matches = {
+            int(match.get("match_number")): match
+            for match in get_ko_matches("r32")
+            if match.get("match_number") is not None
+        }
+
+        st.markdown("### Dieciseisavos / R32")
+        st.caption(
+            "Estado real del cuadro combinado con proyección probabilística "
+            "para los cruces todavía pendientes."
+        )
+        card_columns = st.columns(2)
+        for index, (slot_a, slot_b) in enumerate(R32_BRACKET_VALID, start=1):
+            match = r32_matches.get(index) or {}
+            stored_home = match.get("home_team")
+            stored_away = match.get("away_team")
+            has_real_teams = (
+                stored_home not in (None, "", "Por definir")
+                and stored_away not in (None, "", "Por definir")
+            )
+            home = stored_home if has_real_teams else resolve_slot(slot_a)
+            away = stored_away if has_real_teams else resolve_slot(slot_b)
+            played_match = bool(match.get("played") and has_real_teams)
+            home_goals = match.get("home_goals")
+            away_goals = match.get("away_goals")
+
+            status = "Finalizado" if played_match else "Pendiente"
+            status_class = "finalizado" if played_match else "pendiente"
+            home_score = ""
+            away_score = ""
+            footer = f"Slots: {slot_a} vs {slot_b}"
+
+            if (
+                played_match
+                and home_goals is not None
+                and away_goals is not None
+            ):
+                home_score = str(home_goals)
+                away_score = str(away_goals)
+                if home_goals != away_goals:
+                    winner = home if home_goals > away_goals else away
+                    footer = f"Ganador definitivo: {fp(winner)}"
+            elif home not in ("?", "Mejor 3.º") and away not in ("?", "Mejor 3.º"):
+                home_rating = ratings_used.get(home, 0.5)
+                away_rating = ratings_used.get(away, 0.5)
+                p_home, _, p_away = match_probabilities_dc(
+                    home_rating,
+                    away_rating,
+                    home in HOST_TEAMS,
+                    away in HOST_TEAMS,
                 )
+                ko_total = p_home + p_away
+                if ko_total > 0:
+                    footer = (
+                        f"Modelo: {home} {p_home / ko_total * 100:.1f}% · "
+                        f"{away} {p_away / ko_total * 100:.1f}%"
+                    )
+
+            home_display = fp(home) if home not in ("?", "Mejor 3.º") else home
+            away_display = fp(away) if away not in ("?", "Mejor 3.º") else away
+            with card_columns[(index - 1) % 2]:
+                st.markdown(f"""
+<div class="bracket-card {status_class}">
+  <div class="match-top">
+    <span class="match-number">PARTIDO {index}</span>
+    <span class="status-pill {status_class}">{status.upper()}</span>
+  </div>
+  <div class="match-team"><span>{home_display}</span><span class="match-score">{home_score}</span></div>
+  <div class="match-team"><span>{away_display}</span><span class="match-score">{away_score}</span></div>
+  <div class="match-foot">{footer}</div>
+</div>
+""", unsafe_allow_html=True)
 
         st.divider()
-        st.markdown("#### Camino proyectado por selección")
-        selected = st.selectbox(
-            "Seleccioná un equipo",
-            sorted(ALL_TEAMS, key=lambda t: preds["phase_probs"][t]["champion"], reverse=True)
+        st.markdown("### Camino probabilístico por selección")
+        selectable_teams = sorted(
+            phase_probs,
+            key=lambda team: (phase_probs.get(team) or {}).get("champion", 0),
+            reverse=True,
         )
-        if selected:
-            ph = preds["phase_probs"][selected]
-            gp = next(
-                (v for g,teams in GROUPS.items() if selected in teams
-                 for v in [preds["group_probs"][g]] ),
-                None
-            )
-            team_gp = next((d for d in (gp or []) if d["team"]==selected), {})
-
-            st.markdown(f"### {fp(selected)} — Probabilidades de avance")
-            r1,r2,r3 = st.columns(3)
-            r1.metric("Clasificar del grupo", f"{team_gp.get('qualify',0)}%")
-            r2.metric("Llegar a R16",         f"{ph['r16']}%")
-            r3.metric("Llegar a Cuartos",     f"{ph['qf']}%")
-            r4,r5,r6 = st.columns(3)
-            r4.metric("Llegar a Semis",       f"{ph['sf']}%")
-            r5.metric("Llegar a la Final",    f"{ph['final']}%")
-            r6.metric("🏆 Ser campeón",       f"{ph['champion']}%")
-
-            fig_team = go.Figure(go.Bar(
-                x=["Grupos","R32","R16","Cuartos","Semis","Final","Campeón"],
-                y=[team_gp.get("qualify",0), ph["r32"], ph["r16"],
-                   ph["qf"], ph["sf"], ph["final"], ph["champion"]],
-                marker_color=["#3aa6ff","#3aa6ff","#6aab4e","#6aab4e",
-                              "#ffd84d","#ffd84d","#fff0a8"],
-                text=[f"{v}%" for v in [
-                    team_gp.get("qualify",0), ph["r32"], ph["r16"],
-                    ph["qf"], ph["sf"], ph["final"], ph["champion"]
-                ]],
+        selected = st.selectbox(
+            "Seleccioná una selección",
+            selectable_teams,
+            format_func=fp,
+            key="public_bracket_team",
+        )
+        selected_probs = phase_probs.get(selected) or {}
+        selected_group_rows = next(
+            (
+                group_probs.get(group) or []
+                for group, teams in GROUPS.items()
+                if selected in teams
+            ),
+            [],
+        )
+        team_group_prob = next(
+            (row for row in selected_group_rows if row.get("team") == selected),
+            {},
+        )
+        path_metrics = [
+            ("Clasificó", team_group_prob.get("qualify")),
+            ("R32", selected_probs.get("r32")),
+            ("Octavos", selected_probs.get("r16")),
+            ("Cuartos", selected_probs.get("qf")),
+            ("Semis", selected_probs.get("sf")),
+            ("Final", selected_probs.get("final")),
+            ("Campeón", selected_probs.get("champion")),
+        ]
+        path_metrics = [
+            (label, float(value))
+            for label, value in path_metrics
+            if value is not None
+        ]
+        if path_metrics:
+            metric_columns = st.columns(min(3, len(path_metrics)))
+            for index, (label, value) in enumerate(path_metrics):
+                metric_columns[index % len(metric_columns)].metric(
+                    label,
+                    f"{value:.1f}%",
+                )
+            figure = go.Figure(go.Bar(
+                x=[label for label, _ in path_metrics],
+                y=[value for _, value in path_metrics],
+                marker_color="#ffd84d",
+                text=[f"{value:.1f}%" for _, value in path_metrics],
                 textposition="outside",
             ))
-            fig_team.update_layout(
-                plot_bgcolor="#0d3d24", paper_bgcolor="#0d3d24",
-                font_color="#e3f3e8", yaxis_range=[0,105],
-                title=f"Camino proyectado — {selected}",
+            figure.update_layout(
+                plot_bgcolor="#0d3d24",
+                paper_bgcolor="#0d3d24",
+                font_color="#e3f3e8",
+                yaxis_range=[0, 105],
+                title=f"Camino al título — {selected}",
                 title_font_color="#ffd84d",
             )
-            st.plotly_chart(fig_team, use_container_width=True)
+            st.plotly_chart(figure, use_container_width=True)
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 5 — ANALISTA
@@ -1227,7 +1391,11 @@ if IS_ADMIN:
             "Cada fase tiene su propia sub-pestaña para no mezclar partidos."
         )
 
-        group_played = cached_played_matches(st.session_state.data_version)
+        group_played = [
+            match
+            for match in cached_played_matches(st.session_state.data_version)
+            if match.get("phase") == "groups"
+        ]
 
         ko_played_by_phase = {}
         for phase, phase_name in [("r32","R32"),("r16","R16"),("qf","Cuartos"),("sf","Semis"),("final","Final")]:
@@ -1264,10 +1432,16 @@ if IS_ADMIN:
 # ══════════════════════════════════════════════════════════════════════════════
 
 with tab_value:
-    st.markdown("### 💰 Detector de Value Bets")
-    st.caption(
-        "Seleccioná cualquier partido pendiente de cualquier fase. "
-        "El sistema calcula las probabilidades del modelo y detecta value bets."
+    st.markdown("### 💰 Value Bets")
+    st.markdown(
+        '<div class="public-intro"><b>¿Qué es una value bet?</b> '
+        'Es una oportunidad en la que la probabilidad estimada por el modelo '
+        'es mayor que la probabilidad implícita de la cuota ofrecida.</div>',
+        unsafe_allow_html=True,
+    )
+    st.warning(
+        "Juego responsable: esto no es asesoramiento financiero ni garantía "
+        "de ganancia. Apostá únicamente dinero que puedas permitirte perder."
     )
 
     preds = st.session_state.predictions
@@ -1410,39 +1584,87 @@ with tab_value:
             with c2:
                 st.markdown("**🏦 Cuotas de la casa**")
 
+                home_odd_key = f"vb_odd_home_{selected_match_id}"
+                draw_odd_key = f"vb_odd_draw_{selected_match_id}"
+                away_odd_key = f"vb_odd_away_{selected_match_id}"
+
                 if api_configured():
-                    if st.button("🔄 Cargar cuotas automáticamente"):
+                    if st.button(
+                        "🔄 Cargar cuotas disponibles",
+                        key=f"load_odds_{selected_match_id}",
+                        use_container_width=True,
+                    ):
                         best, commence, msg = get_best_odds(home, away)
                         if best:
-                            st.session_state[f"oh_{home}_{away}"] = best["odd_home"]
-                            st.session_state[f"od_{home}_{away}"] = best["odd_draw"]
-                            st.session_state[f"oa_{home}_{away}"] = best["odd_away"]
+                            st.session_state[home_odd_key] = best.get("odd_home")
+                            st.session_state[draw_odd_key] = best.get("odd_draw")
+                            st.session_state[away_odd_key] = best.get("odd_away")
                             st.success(f"✅ {msg}")
                         else:
                             st.warning(msg)
+                else:
+                    st.caption(
+                        "Sin proveedor de cuotas configurado. Podés ingresar "
+                        "cuotas reales manualmente para analizarlas."
+                    )
 
-                oh = st.number_input(f"Cuota {home} gana",
-                    min_value=1.01, max_value=50.0,
-                    value=st.session_state.get(f"oh_{home}_{away}", 2.10),
-                    step=0.05, key=f"oh_{home}_{away}")
+                oh = st.number_input(
+                    f"Cuota {home} gana",
+                    min_value=1.01,
+                    max_value=50.0,
+                    value=None,
+                    step=0.05,
+                    placeholder="Ingresá la cuota",
+                    key=home_odd_key,
+                )
 
                 if not is_ko:
-                    od = st.number_input("Cuota empate",
-                        min_value=1.01, max_value=50.0,
-                        value=st.session_state.get(f"od_{home}_{away}", 3.40),
-                        step=0.05, key=f"od_{home}_{away}")
+                    od = st.number_input(
+                        "Cuota empate",
+                        min_value=1.01,
+                        max_value=50.0,
+                        value=None,
+                        step=0.05,
+                        placeholder="Ingresá la cuota",
+                        key=draw_odd_key,
+                    )
                 else:
                     od = None
 
-                oa = st.number_input(f"Cuota {away} gana",
-                    min_value=1.01, max_value=50.0,
-                    value=st.session_state.get(f"oa_{home}_{away}", 3.20),
-                    step=0.05, key=f"oa_{home}_{away}")
+                oa = st.number_input(
+                    f"Cuota {away} gana",
+                    min_value=1.01,
+                    max_value=50.0,
+                    value=None,
+                    step=0.05,
+                    placeholder="Ingresá la cuota",
+                    key=away_odd_key,
+                )
 
-                edge_min = st.slider("Edge mínimo (%)", 1, 10, 3,
-                                     key=f"edge_{home}_{away}")
+                edge_min = st.slider(
+                    "Edge mínimo (%)",
+                    1,
+                    10,
+                    3,
+                    key=f"edge_{selected_match_id}",
+                )
+                odds_ready = (
+                    oh is not None
+                    and oa is not None
+                    and (is_ko or od is not None)
+                )
+                if not odds_ready:
+                    st.caption(
+                        "Ingresá todas las cuotas para calcular probabilidad "
+                        "implícita, edge y valor esperado."
+                    )
 
-                if st.button("🔍 DETECTAR VALUE BETS", use_container_width=True):
+                if st.button(
+                    "🔍 DETECTAR VALUE BETS",
+                    use_container_width=True,
+                    disabled=not odds_ready,
+                    key=f"detect_vb_{selected_match_id}",
+                ):
                     if is_ko:
                         from models.prediction_engine import (
                             odd_to_implied_prob, remove_overround,
@@ -1469,25 +1691,50 @@ with tab_value:
                     else:
                         vbs = detect_value_bets((ph, pd_, pa), (oh, od, oa), edge_min)
 
-                    if vbs:
-                        st.success(f"✅ {len(vbs)} value bet(s) encontrado(s)")
-                        for vb in vbs:
-                            color = "🟢" if vb["edge"] >= 6 else "🟡"
-                            st.markdown(f"""
-{color} **{vb['market']}** — Cuota `{vb['odd']}`
-- Modelo: `{vb['model_prob']}%` | Casa: `{vb['impl_prob']}%`
-- Edge: `+{vb['edge']}%` | EV: `{vb['ev']:+.4f}`
-- Kelly 25%: apostar `{vb['kelly_25']*100:.2f}%` del bankroll
-""")
+                    positive_vbs = [
+                        vb for vb in vbs
+                        if vb.get("edge", 0) > 0
+                    ]
+                    if positive_vbs:
+                        positive_vbs.sort(
+                            key=lambda vb: vb.get("edge", 0),
+                            reverse=True,
+                        )
+                        st.success(
+                            f"✅ {len(positive_vbs)} oportunidad(es) "
+                            "con edge positivo"
+                        )
+                        opportunities = pd.DataFrame([{
+                            "Mercado": vb.get("market"),
+                            "Prob. modelo (%)": vb.get("model_prob"),
+                            "Cuota": vb.get("odd"),
+                            "Prob. implícita (%)": vb.get("impl_prob"),
+                            "Edge (%)": vb.get("edge"),
+                            "EV": vb.get("ev"),
+                        } for vb in positive_vbs])
+                        st.dataframe(
+                            opportunities.style.format({
+                                "Prob. modelo (%)": "{:.1f}%",
+                                "Cuota": "{:.2f}",
+                                "Prob. implícita (%)": "{:.1f}%",
+                                "Edge (%)": "+{:.1f}%",
+                                "EV": "{:+.4f}",
+                            }),
+                            hide_index=True,
+                            use_container_width=True,
+                        )
+                        for vb in positive_vbs:
                             save_value_bet(
                                 sel_m["id"], vb["market"], vb["market"],
                                 vb["model_prob"]/100, vb["impl_prob"]/100,
                                 vb["odd"], vb["edge"], vb["ev"], vb["kelly_25"]
                             )
-                        st.caption("✅ Guardado en historial")
+                        st.caption("Resultado guardado en el historial local.")
                     else:
-                        st.warning(f"Sin value bets con edge ≥ {edge_min}%")
-                        st.caption("Las cuotas de la casa reflejan bien el modelo, o son desfavorables.")
+                        st.info(
+                            f"No hay oportunidades con edge positivo "
+                            f"por encima del umbral de {edge_min}%."
+                        )
 
         st.divider()
         st.markdown("### 📋 Historial de value bets detectados")
