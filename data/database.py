@@ -187,14 +187,40 @@ def clear_match_result(match_id):
 
 
 def get_all_matches(phase=None):
-    with get_db() as conn:
-        if phase:
-            rows = conn.execute(
-                "SELECT * FROM matches WHERE phase=? ORDER BY match_number", (phase,)
-            ).fetchall()
-        else:
+    try:
+        with get_db() as conn:
+            if phase:
+                rows = conn.execute(
+                    "SELECT * FROM matches WHERE phase=? ORDER BY match_number", (phase,)
+                ).fetchall()
+            else:
+                rows = conn.execute("""
+                    SELECT * FROM matches
+                    ORDER BY CASE phase
+                        WHEN 'groups' THEN 1
+                        WHEN 'r32' THEN 2
+                        WHEN 'r16' THEN 3
+                        WHEN 'qf' THEN 4
+                        WHEN 'sf' THEN 5
+                        WHEN 'third_place' THEN 6
+                        WHEN 'final' THEN 7
+                        ELSE 8
+                    END,
+                    match_number
+                """).fetchall()
+    except sqlite3.OperationalError as exc:
+        if "no such table: matches" in str(exc).lower():
+            return []
+        raise
+    return [dict(r) for r in rows]
+
+
+def get_played_matches():
+    try:
+        with get_db() as conn:
             rows = conn.execute("""
                 SELECT * FROM matches
+                WHERE played=1
                 ORDER BY CASE phase
                     WHEN 'groups' THEN 1
                     WHEN 'r32' THEN 2
@@ -207,26 +233,10 @@ def get_all_matches(phase=None):
                 END,
                 match_number
             """).fetchall()
-    return [dict(r) for r in rows]
-
-
-def get_played_matches():
-    with get_db() as conn:
-        rows = conn.execute("""
-            SELECT * FROM matches
-            WHERE played=1
-            ORDER BY CASE phase
-                WHEN 'groups' THEN 1
-                WHEN 'r32' THEN 2
-                WHEN 'r16' THEN 3
-                WHEN 'qf' THEN 4
-                WHEN 'sf' THEN 5
-                WHEN 'third_place' THEN 6
-                WHEN 'final' THEN 7
-                ELSE 8
-            END,
-            match_number
-        """).fetchall()
+    except sqlite3.OperationalError as exc:
+        if "no such table: matches" in str(exc).lower():
+            return []
+        raise
     return [dict(r) for r in rows]
 
 
@@ -293,10 +303,15 @@ def save_prediction(matches_played, simulations, results_dict):
 
 
 def get_latest_prediction():
-    with get_db() as conn:
-        row = conn.execute(
-            "SELECT * FROM predictions ORDER BY generated_at DESC LIMIT 1"
-        ).fetchone()
+    try:
+        with get_db() as conn:
+            row = conn.execute(
+                "SELECT * FROM predictions ORDER BY generated_at DESC LIMIT 1"
+            ).fetchone()
+    except sqlite3.OperationalError as exc:
+        if "no such table: predictions" in str(exc).lower():
+            return None
+        raise
     if row:
         d = dict(row)
         d["results_json"] = json.loads(d["results_json"])
@@ -319,13 +334,22 @@ def save_value_bet(match_id, market, selection, model_prob,
 
 
 def get_value_bets_history():
-    with get_db() as conn:
-        rows = conn.execute("""
-            SELECT vb.*, m.home_team, m.away_team, m.group_letter
-            FROM value_bets vb
-            JOIN matches m ON m.id = vb.match_id
-            ORDER BY vb.detected_at DESC
-        """).fetchall()
+    try:
+        with get_db() as conn:
+            rows = conn.execute("""
+                SELECT vb.*, m.home_team, m.away_team, m.group_letter
+                FROM value_bets vb
+                JOIN matches m ON m.id = vb.match_id
+                ORDER BY vb.detected_at DESC
+            """).fetchall()
+    except sqlite3.OperationalError as exc:
+        message = str(exc).lower()
+        if (
+            "no such table: value_bets" in message
+            or "no such table: matches" in message
+        ):
+            return []
+        raise
     return [dict(r) for r in rows]
 
 
