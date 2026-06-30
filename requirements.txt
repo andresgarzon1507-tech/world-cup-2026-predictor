@@ -1,0 +1,8 @@
+streamlit>=1.41.0
+pandas==2.2.3
+numpy>=2.1.0
+scipy>=1.15.0
+plotly==5.22.0
+sqlalchemy==2.0.30
+requests==2.32.2
+python-dotenv==1.0.1

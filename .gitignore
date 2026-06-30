@@ -1,0 +1,24 @@
+# Base de datos local (no subir resultados cargados)
+worldcup2026.db
+worldcup2026.db-journal
+worldcup2026.db-wal
+worldcup2026.db-shm
+
+# Entorno virtual de Python
+venv/
+env/
+.venv/
+
+# Cache de Python
+__pycache__/
+*.pyc
+
+# Variables de entorno (API keys)
+.env
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Sistema
+.DS_Store
+Thumbs.db
