@@ -22,6 +22,7 @@ from data.database import (
 )
 from data.public_export import export_public_data, load_public_data
 from data.tournament_data import GROUPS, FLAGS, ALL_TEAMS, GROUP_LETTERS, HOST_TEAMS, R32_BRACKET_VALID, THIRD_PLACE_SLOTS
+from engine.bracket import source_local_matches
 from models.prediction_engine import (
     run_monte_carlo, match_probabilities_dc, over_under_probs,
     exact_score_probs, detect_value_bets, compute_dynamic_ratings,
@@ -636,17 +637,32 @@ if IS_ADMIN:
                 init_ko_matches()
                 ko_matches = get_ko_matches(phase_key)
 
-            for i, pair in enumerate(bracket_pairs or []):
-                m = ko_matches[i] if i < len(ko_matches) else None
-                if m is None: continue
+            matches_by_number = {
+                int(match["match_number"]): match
+                for match in ko_matches
+                if match.get("match_number") is not None
+            }
+
+            # Todas las fases deben recorrerse. Antes este ciclo dependía de
+            # bracket_pairs, que solo existe para R32, por lo que octavos y
+            # las rondas posteriores nunca recibían a sus clasificados.
+            for i in range(n_matches):
+                match_number = i + 1
+                m = matches_by_number.get(match_number)
+                if m is None:
+                    continue
 
                 if phase_key == "r32" and bracket_pairs:
-                    slot_a, slot_b = pair
+                    slot_a, slot_b = bracket_pairs[i]
                     ta, _ = resolve(slot_a)
                     tb, _ = resolve(slot_b)
                 elif prev_phase:
-                    ta = get_ko_winner(prev_phase, i*2+1) or ""
-                    tb = get_ko_winner(prev_phase, i*2+2) or ""
+                    source_a, source_b = source_local_matches(
+                        phase_key,
+                        match_number,
+                    )
+                    ta = get_ko_winner(prev_phase, source_a) or ""
+                    tb = get_ko_winner(prev_phase, source_b) or ""
                 else:
                     ta, tb = m["home_team"], m["away_team"]
 
@@ -663,10 +679,26 @@ if IS_ADMIN:
                     and not ta.startswith("3-")
                     and not tb.startswith("3-")
                 )
-                if fixture_is_empty and resolved_teams_are_real:
+                if phase_key == "r32" and fixture_is_empty and resolved_teams_are_real:
                     # La DB es la fuente de verdad. Solo completamos filas vacías;
                     # nunca reordenamos ni sobrescribimos un cruce ya guardado.
-                    update_ko_teams(phase_key, i + 1, ta, tb)
+                    update_ko_teams(phase_key, match_number, ta, tb)
+                elif prev_phase and not m.get("played"):
+                    # En rondas posteriores, los equipos sí deben seguir a los
+                    # ganadores de los partidos fuente oficiales. Nunca se toca
+                    # un encuentro de la ronda siguiente que ya fue jugado.
+                    stored_teams = (
+                        m.get("home_team") or "",
+                        m.get("away_team") or "",
+                    )
+                    resolved_teams = (ta, tb)
+                    if stored_teams != resolved_teams:
+                        update_ko_teams(
+                            phase_key,
+                            match_number,
+                            ta,
+                            tb,
+                        )
 
             ko_matches = get_ko_matches(phase_key)
 
