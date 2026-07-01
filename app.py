@@ -313,8 +313,28 @@ with st.sidebar:
     st.markdown("### 🏆 Top 5 favoritos")
     preds = st.session_state.predictions
     if preds:
-        for i,d in enumerate(preds["champion_probs"][:5]):
-            st.markdown(f"`{i+1}.` {fp(d['team'])} — **{d['prob']}%**")
+        top_favorites = []
+        seen_teams = set()
+        for candidate in preds.get("champion_probs") or []:
+            team = str(candidate.get("team") or "").strip()
+            normalized_team = team.casefold()
+            if not team or normalized_team in seen_teams:
+                continue
+            seen_teams.add(normalized_team)
+            top_favorites.append(candidate)
+            if len(top_favorites) == 5:
+                break
+
+        for i, candidate in enumerate(top_favorites, start=1):
+            # Chrome estaba traduciendo nombres propios dentro del Markdown
+            # (Francia -> México, Argentina -> España). translate="no" evita
+            # que equipos distintos terminen viéndose como duplicados.
+            st.markdown(
+                f'<div class="notranslate" translate="no">'
+                f'<code>{i}.</code> {fp(candidate["team"])} — '
+                f'<strong>{candidate["prob"]}%</strong></div>',
+                unsafe_allow_html=True,
+            )
     else:
         st.caption("Ejecutá la simulación primero")
 
@@ -1601,10 +1621,24 @@ with tab_value:
         st.warning("⚠️ Ejecutá la simulación primero desde el panel izquierdo.")
     else:
         played_m = played
-        ratings = compute_dynamic_ratings(
+        # Misma fuente que Monte Carlo: estos ratings ya incorporan
+        # resultados, estadísticas completas y notas del Analista.
+        ratings = preds.get("ratings_used") or compute_dynamic_ratings(
             played_m,
             get_visible_analyst_notes(),
+            (
+                cached_all_match_stats(st.session_state.data_version)
+                if IS_ADMIN
+                else None
+            ),
         )
+
+        if preds.get("matches_played") != len(played_m):
+            st.warning(
+                "Hay resultados posteriores a la última simulación. "
+                "Ejecutá **SIMULAR AHORA** para actualizar ratings, "
+                "probabilidades y marcadores."
+            )
 
         all_m = all_matches
 

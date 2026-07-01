@@ -294,6 +294,38 @@ def _tau(x, y, lh, la, rho):
     return 1.0
 
 
+def score_matrix_dc(r_home, r_away,
+                    home_is_host=False, away_is_host=False,
+                    rho=RHO, max_goals=8):
+    """Matriz normalizada de marcadores con corrección Dixon-Coles."""
+    lh, la = expected_goals(
+        r_home,
+        r_away,
+        home_is_host,
+        away_is_host,
+    )
+    matrix = {}
+    for home_goals in range(max_goals + 1):
+        for away_goals in range(max_goals + 1):
+            probability = (
+                poisson.pmf(home_goals, lh)
+                * poisson.pmf(away_goals, la)
+                * _tau(home_goals, away_goals, lh, la, rho)
+            )
+            matrix[(home_goals, away_goals)] = max(
+                0.0,
+                float(probability),
+            )
+
+    total = sum(matrix.values())
+    if total > 0:
+        matrix = {
+            score: probability / total
+            for score, probability in matrix.items()
+        }
+    return matrix
+
+
 def match_probabilities_dc(r_home, r_away,
                             home_is_host=False, away_is_host=False,
                             rho=RHO):
@@ -301,21 +333,24 @@ def match_probabilities_dc(r_home, r_away,
     Calcula P(local gana), P(empate), P(visitante gana)
     usando Dixon-Coles con transformación exponencial.
     """
-    lh, la = expected_goals(r_home, r_away, home_is_host, away_is_host)
-    max_g  = 8
+    matrix = score_matrix_dc(
+        r_home,
+        r_away,
+        home_is_host,
+        away_is_host,
+        rho=rho,
+    )
     p_hw = p_d = p_aw = 0.0
 
-    for i in range(max_g + 1):
-        for j in range(max_g + 1):
-            p = (poisson.pmf(i, lh) *
-                 poisson.pmf(j, la) *
-                 _tau(i, j, lh, la, rho))
-            if   i > j: p_hw += p
-            elif i == j: p_d  += p
-            else:        p_aw += p
+    for (home_goals, away_goals), probability in matrix.items():
+        if home_goals > away_goals:
+            p_hw += probability
+        elif home_goals == away_goals:
+            p_d += probability
+        else:
+            p_aw += probability
 
-    total = p_hw + p_d + p_aw
-    return p_hw/total, p_d/total, p_aw/total
+    return p_hw, p_d, p_aw
 
 
 def over_under_probs(r_home, r_away, home_is_host=False, away_is_host=False):
@@ -333,14 +368,29 @@ def over_under_probs(r_home, r_away, home_is_host=False, away_is_host=False):
     return probs
 
 
-def exact_score_probs(r_home, r_away, home_is_host=False, away_is_host=False, top_n=10):
-    lh, la = expected_goals(r_home, r_away, home_is_host, away_is_host)
-    scores = []
-    for i in range(8):
-        for j in range(8):
-            p = poisson.pmf(i, lh) * poisson.pmf(j, la)
-            scores.append({"score": f"{i}-{j}", "prob": round(p * 100, 2)})
-    return sorted(scores, key=lambda x: x["prob"], reverse=True)[:top_n]
+def exact_score_probs(r_home, r_away,
+                      home_is_host=False, away_is_host=False,
+                      top_n=10, rho=RHO):
+    """Marcadores exactos derivados de la misma matriz que el mercado 1X2."""
+    matrix = score_matrix_dc(
+        r_home,
+        r_away,
+        home_is_host,
+        away_is_host,
+        rho=rho,
+    )
+    scores = [
+        {
+            "score": f"{home_goals}-{away_goals}",
+            "prob": round(probability * 100, 2),
+        }
+        for (home_goals, away_goals), probability in matrix.items()
+    ]
+    return sorted(
+        scores,
+        key=lambda item: item["prob"],
+        reverse=True,
+    )[:top_n]
 
 
 # ─── SIMULACIÓN DE PARTIDO ───────────────────────────────────────────────────
