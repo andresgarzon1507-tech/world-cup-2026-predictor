@@ -151,6 +151,34 @@ def color_prob(p):
     if p >= 10: return "🔵"
     return "🔴"
 
+def get_eliminated_teams(matches):
+    """Obtiene eliminados solo desde resultados KO definitivos."""
+    eliminated = set()
+    for match in matches:
+        if (
+            match.get("phase") not in {"r32", "r16", "qf", "sf", "final"}
+            or not match.get("played")
+        ):
+            continue
+        home = match.get("home_team")
+        away = match.get("away_team")
+        if not home or not away:
+            continue
+
+        winner = match.get("winner_team")
+        home_goals = match.get("home_goals")
+        away_goals = match.get("away_goals")
+        if winner not in (home, away):
+            if (
+                home_goals is None
+                or away_goals is None
+                or home_goals == away_goals
+            ):
+                continue
+            winner = home if home_goals > away_goals else away
+        eliminated.add(away if winner == home else home)
+    return eliminated
+
 # ─── CAPA DE CACHÉ ────────────────────────────────────────────────────────────
 if "data_version" not in st.session_state:
     st.session_state.data_version = 0
@@ -315,10 +343,15 @@ with st.sidebar:
     if preds:
         top_favorites = []
         seen_teams = set()
+        eliminated_teams = get_eliminated_teams(all_matches)
         for candidate in preds.get("champion_probs") or []:
             team = str(candidate.get("team") or "").strip()
             normalized_team = team.casefold()
-            if not team or normalized_team in seen_teams:
+            if (
+                not team
+                or team in eliminated_teams
+                or normalized_team in seen_teams
+            ):
                 continue
             seen_teams.add(normalized_team)
             top_favorites.append(candidate)
@@ -732,7 +765,9 @@ if IS_ADMIN:
 
                 winner = None
                 if played and m["home_goals"] is not None:
-                    winner = home_t if m["home_goals"] > m["away_goals"] else away_t
+                    winner = m.get("winner_team")
+                    if not winner and m["home_goals"] != m["away_goals"]:
+                        winner = home_t if m["home_goals"] > m["away_goals"] else away_t
 
                 with cols[i % 2]:
                     label = f"{'✅' if played else '⬜'} Partido {i+1}"
@@ -766,8 +801,21 @@ if IS_ADMIN:
                                     st.markdown(f"**{fp(away_t)}**")
                                     st.caption(f"✈️ Visitante — {away_t}")
 
+                                penalty_winner = None
                                 if new_hg == new_ag:
-                                    st.caption("⚠️ Empate no válido en KO — el ganador se define por penales. Poné el marcador final incluyendo el resultado de penales si es necesario.")
+                                    st.caption("⚽ El marcador quedó empatado. Indicá quién avanzó por penales.")
+                                    penalty_options = ["Seleccionar ganador...", home_t, away_t]
+                                    stored_winner = m.get("winner_team")
+                                    stored_index = (
+                                        penalty_options.index(stored_winner)
+                                        if stored_winner in penalty_options else 0
+                                    )
+                                    penalty_winner = st.selectbox(
+                                        "Ganador por penales",
+                                        penalty_options,
+                                        index=stored_index,
+                                        key=f"{phase_key}_penalty_winner_{i+1}",
+                                    )
 
                                 bcol1, bcol2 = st.columns(2)
                                 with bcol1:
@@ -776,10 +824,25 @@ if IS_ADMIN:
                                     deleted = st.form_submit_button("🗑️ Borrar", use_container_width=True)
 
                                 if submitted:
-                                    save_ko_result(phase_key, i+1, new_hg, new_ag)
-                                    bump_data_version()
-                                    st.success(f"✅ {home_t} {new_hg}-{new_ag} {away_t}")
-                                    st.rerun()
+                                    if new_hg == new_ag and penalty_winner not in (home_t, away_t):
+                                        st.error("⚠️ Seleccioná quién ganó por penales.")
+                                    else:
+                                        save_ko_result(
+                                            phase_key, i+1, new_hg, new_ag,
+                                            winner_team=(
+                                                penalty_winner if new_hg == new_ag else None
+                                            ),
+                                            decided_by=(
+                                                "penalties" if new_hg == new_ag else "regular"
+                                            ),
+                                        )
+                                        bump_data_version()
+                                        detail = (
+                                            f" · ganó {penalty_winner} por penales"
+                                            if new_hg == new_ag else ""
+                                        )
+                                        st.success(f"✅ {home_t} {new_hg}-{new_ag} {away_t}{detail}")
+                                        st.rerun()
                                 if deleted:
                                     clear_ko_result(phase_key, i+1)
                                     bump_data_version()
@@ -968,14 +1031,7 @@ with tab_pred:
             if m.get("phase") in {"r32", "r16", "qf", "sf", "final"}
             and m.get("played")
         ]
-        eliminated = set()
-        for match in played_ko:
-            home = match.get("home_team")
-            away = match.get("away_team")
-            hg = match.get("home_goals")
-            ag = match.get("away_goals")
-            if home and away and hg is not None and ag is not None and hg != ag:
-                eliminated.add(away if hg > ag else home)
+        eliminated = get_eliminated_teams(played_ko)
 
         alive = [
             team for team, metrics in phase_probs.items()
@@ -1185,9 +1241,13 @@ with tab_bracket:
             ):
                 home_score = str(home_goals)
                 away_score = str(away_goals)
-                if home_goals != away_goals:
+                winner = match.get("winner_team")
+                if not winner and home_goals != away_goals:
                     winner = home if home_goals > away_goals else away
+                if winner:
                     footer = f"Ganador definitivo: {fp(winner)}"
+                    if match.get("decided_by") == "penalties":
+                        footer += " (penales)"
             elif home not in ("?", "Mejor 3.º") and away not in ("?", "Mejor 3.º"):
                 home_rating = ratings_used.get(home, 0.5)
                 away_rating = ratings_used.get(away, 0.5)

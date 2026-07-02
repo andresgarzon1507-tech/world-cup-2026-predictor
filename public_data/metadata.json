@@ -1,10 +1,10 @@
 {
-  "generated_at": "2026-07-01T22:56:25.756128+00:00",
-  "played_matches": 79,
+  "generated_at": "2026-07-02T15:03:13.379010+00:00",
+  "played_matches": 82,
   "total_matches": 104,
-  "remaining_matches": 25,
+  "remaining_matches": 22,
   "model_version": "ko-aware-v1",
   "simulations": 10000,
-  "prediction_generated_at": "2026-07-01 22:54:13",
+  "prediction_generated_at": "2026-07-02 15:02:20",
   "source": "local_export"
 }

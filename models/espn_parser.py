@@ -29,7 +29,7 @@ TEAM_NAME_ALIASES = {
     "argelia":               "algeria",
     "austria":               "austria",
     "belgica":               "belgium",
-    "bosnia y herzegovina":  "bosnia-herzegovina",
+    "bosnia y herzegovina":  "bosnia herzegovina",
     "brasil":                "brazil",
     "cabo verde":            "cape verde",
     "canada":                "canada",
@@ -87,7 +87,12 @@ def normalize_team_name(name: str) -> str:
     s = "".join(c for c in s if unicodedata.category(c) != "Mn")
     s = re.sub(r"[^a-z0-9]+", " ", s.lower()).strip()
     s = " ".join(s.split())
-    return TEAM_NAME_ALIASES.get(s, s)
+    canonical = TEAM_NAME_ALIASES.get(s, s)
+    # Los valores de alias también deben quedar normalizados. De lo
+    # contrario, un alias con guion no coincide con el mismo nombre que ESPN
+    # entrega separado por espacios (Bosnia-Herzegovina).
+    canonical = re.sub(r"[^a-z0-9]+", " ", canonical.lower()).strip()
+    return " ".join(canonical.split())
 
 
 def teams_match(name_a: str, name_b: str) -> bool:

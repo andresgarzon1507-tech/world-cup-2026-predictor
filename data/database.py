@@ -77,6 +77,8 @@ def init_database():
                 home_goals       INTEGER,
                 away_goals       INTEGER,
                 played           INTEGER DEFAULT 0,
+                winner_team      TEXT,
+                decided_by       TEXT,
                 match_date       TEXT,
                 venue            TEXT,
                 created_at       TEXT    DEFAULT CURRENT_TIMESTAMP,
@@ -441,6 +443,24 @@ def _database_is_ready():
             conn.close()
 
 
+def _ensure_match_winner_columns():
+    """Agrega de forma idempotente el ganador KO a bases creadas anteriormente."""
+    with get_db() as conn:
+        table_exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='matches'"
+        ).fetchone()
+        if not table_exists:
+            return
+
+        columns = {
+            row["name"] for row in conn.execute("PRAGMA table_info(matches)").fetchall()
+        }
+        if "winner_team" not in columns:
+            conn.execute("ALTER TABLE matches ADD COLUMN winner_team TEXT")
+        if "decided_by" not in columns:
+            conn.execute("ALTER TABLE matches ADD COLUMN decided_by TEXT")
+
+
 def ensure_database_initialized():
     """
     Inicializa esquema, equipos y fixture una sola vez cuando la base está vacía.
@@ -451,6 +471,8 @@ def ensure_database_initialized():
     global _INITIALIZED_DB_PATH
 
     normalized_path = os.path.abspath(DB_PATH)
+    if _database_is_ready():
+        _ensure_match_winner_columns()
     if (
         _INITIALIZED_DB_PATH == normalized_path
         and _database_is_ready()
@@ -470,6 +492,7 @@ def ensure_database_initialized():
         )
 
         init_database()
+        _ensure_match_winner_columns()
 
         for group, teams in GROUPS.items():
             for team in teams:
@@ -565,6 +588,7 @@ def update_ko_teams(phase, match_number, home_team, away_team):
                 UPDATE matches
                 SET home_team = ?, away_team = ?,
                     home_goals = NULL, away_goals = NULL, played = 0,
+                    winner_team = NULL, decided_by = NULL,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE phase = ? AND match_number = ?
             """, (home_team, away_team, phase, match_number))
@@ -576,15 +600,43 @@ def update_ko_teams(phase, match_number, home_team, away_team):
             """, (home_team, away_team, phase, match_number))
 
 
-def save_ko_result(phase, match_number, home_goals, away_goals):
-    """Guarda el resultado de un partido KO."""
+def save_ko_result(
+    phase, match_number, home_goals, away_goals,
+    winner_team=None, decided_by=None,
+):
+    """Guarda un resultado KO y exige el ganador cuando hubo penales."""
     with get_db() as conn:
+        match = conn.execute("""
+            SELECT home_team, away_team FROM matches
+            WHERE phase = ? AND match_number = ?
+        """, (phase, match_number)).fetchone()
+        if not match:
+            raise ValueError("No existe el partido de eliminatorias indicado.")
+
+        valid_teams = {match["home_team"], match["away_team"]}
+        if home_goals == away_goals:
+            if winner_team not in valid_teams:
+                raise ValueError("Seleccioná quién ganó la definición por penales.")
+            decided_by = "penalties"
+        else:
+            score_winner = (
+                match["home_team"] if home_goals > away_goals else match["away_team"]
+            )
+            if winner_team is not None and winner_team != score_winner:
+                raise ValueError("El ganador no coincide con el marcador ingresado.")
+            winner_team = score_winner
+            decided_by = "regular"
+
         conn.execute("""
             UPDATE matches
             SET home_goals = ?, away_goals = ?, played = 1,
+                winner_team = ?, decided_by = ?,
                 updated_at = CURRENT_TIMESTAMP
             WHERE phase = ? AND match_number = ?
-        """, (home_goals, away_goals, phase, match_number))
+        """, (
+            home_goals, away_goals, winner_team, decided_by,
+            phase, match_number,
+        ))
 
 
 def clear_ko_result(phase, match_number):
@@ -600,6 +652,7 @@ def clear_ko_result(phase, match_number):
         conn.execute("""
             UPDATE matches
             SET home_goals=NULL, away_goals=NULL, played=0,
+                winner_team=NULL, decided_by=NULL,
                 updated_at=CURRENT_TIMESTAMP
             WHERE phase=? AND match_number=?
         """, (phase, match_number))
@@ -612,11 +665,18 @@ def get_ko_winner(phase, match_number):
     """Retorna el ganador de un partido KO si ya fue jugado."""
     with get_db() as conn:
         row = conn.execute("""
-            SELECT home_team, away_team, home_goals, away_goals, played
+            SELECT home_team, away_team, home_goals, away_goals, played,
+                   winner_team
             FROM matches
             WHERE phase = ? AND match_number = ?
         """, (phase, match_number)).fetchone()
     if not row or not row["played"]:
+        return None
+    if row["winner_team"] in (row["home_team"], row["away_team"]):
+        return row["winner_team"]
+    if row["home_goals"] is None or row["away_goals"] is None:
+        return None
+    if row["home_goals"] == row["away_goals"]:
         return None
     return row["home_team"] if row["home_goals"] > row["away_goals"] else row["away_team"]
 

@@ -570,6 +570,7 @@ def run_monte_carlo(all_matches, analyst_notes=None, match_stats=None, n_sims=SI
             away = real_match.get("away_team")
             home_goals = real_match.get("home_goals")
             away_goals = real_match.get("away_goals")
+            stored_winner = real_match.get("winner_team")
 
             expected_teams = {team for team in (team_a, team_b) if team}
             stored_teams = {team for team in (home, away) if team}
@@ -577,6 +578,9 @@ def run_monte_carlo(all_matches, analyst_notes=None, match_stats=None, n_sims=SI
                 len(expected_teams) == 2
                 and expected_teams == stored_teams
             )
+
+            if same_match and stored_winner in expected_teams:
+                return stored_winner
 
             if (
                 same_match

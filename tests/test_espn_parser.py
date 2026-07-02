@@ -7,6 +7,11 @@ class EspnParserTests(unittest.TestCase):
     def test_curazao_alias_matches_espn(self):
         self.assertTrue(teams_match("Curazao", "Curaçao"))
 
+    def test_bosnia_alias_matches_hyphenated_espn_name(self):
+        self.assertTrue(
+            teams_match("Bosnia y Herzegovina", "Bosnia-Herzegovina")
+        )
+
     def test_statistics_fallback_from_header_competitors(self):
         summary = {"header": {"competitions": [{"competitors": [
             {"homeAway": "home", "team": {"displayName": "Germany"},
