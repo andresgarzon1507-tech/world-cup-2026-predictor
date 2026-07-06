@@ -26,6 +26,7 @@ from engine.bracket import source_local_matches
 from models.prediction_engine import (
     run_monte_carlo, match_probabilities_dc, over_under_probs,
     exact_score_probs, detect_value_bets, compute_dynamic_ratings,
+    knockout_win_probabilities,
 )
 from models.odds_api import (
     get_live_odds, get_best_odds, get_remaining_requests, api_configured,
@@ -1251,18 +1252,16 @@ with tab_bracket:
             elif home not in ("?", "Mejor 3.º") and away not in ("?", "Mejor 3.º"):
                 home_rating = ratings_used.get(home, 0.5)
                 away_rating = ratings_used.get(away, 0.5)
-                p_home, _, p_away = match_probabilities_dc(
+                p_home, p_away = knockout_win_probabilities(
                     home_rating,
                     away_rating,
                     home in HOST_TEAMS,
                     away in HOST_TEAMS,
                 )
-                ko_total = p_home + p_away
-                if ko_total > 0:
-                    footer = (
-                        f"Modelo: {home} {p_home / ko_total * 100:.1f}% · "
-                        f"{away} {p_away / ko_total * 100:.1f}%"
-                    )
+                footer = (
+                    f"Modelo: {home} {p_home * 100:.1f}% · "
+                    f"{away} {p_away * 100:.1f}%"
+                )
 
             home_display = fp(home) if home not in ("?", "Mejor 3.º") else home
             away_display = fp(away) if away not in ("?", "Mejor 3.º") else away
@@ -1667,8 +1666,9 @@ with tab_value:
     st.markdown("### 💰 Value Bets")
     st.markdown(
         '<div class="public-intro"><b>¿Qué es una value bet?</b> '
-        'Es una oportunidad en la que la probabilidad estimada por el modelo '
-        'es mayor que la probabilidad implícita de la cuota ofrecida.</div>',
+        'Es una oportunidad cuyo valor esperado real —probabilidad del modelo '
+        'por cuota menos uno— supera el umbral elegido. El edge des-vig se '
+        'muestra como contexto y no decide la selección.</div>',
         unsafe_allow_html=True,
     )
     st.warning(
@@ -1785,35 +1785,32 @@ with tab_value:
             ou          = over_under_probs(rh, ra, hh, ah)
             scores      = exact_score_probs(rh, ra, hh, ah)
 
-            if is_ko:
-                total_ko = ph + pa
-                if total_ko > 0:
-                    ph_ko = ph / total_ko
-                    pa_ko = pa / total_ko
-                else:
-                    ph_ko = pa_ko = 0.5
-            else:
-                ph_ko = ph
-                pa_ko = pa
-
             ph_champ = preds["phase_probs"].get(home,{}).get("champion",0)
             pa_champ = preds["phase_probs"].get(away,{}).get("champion",0)
 
             c1, c2 = st.columns(2)
 
             with c1:
-                st.markdown("**📊 Modelo — Probabilidades del partido**")
+                st.markdown("**📊 Modelo — Resultado a 90 minutos**")
+                st.table({
+                    "Resultado": [
+                        f"🏠 {home} gana en 90 min",
+                        "🤝 Empate a 90 min",
+                        f"✈️ {away} gana en 90 min",
+                    ],
+                    "Probabilidad": [
+                        f"{ph*100:.1f}%",
+                        f"{pd_*100:.1f}%",
+                        f"{pa*100:.1f}%",
+                    ],
+                })
                 if is_ko:
-                    st.table({
-                        "Resultado": [f"🏠 {home} gana", f"✈️ {away} gana"],
-                        "Probabilidad": [f"{ph_ko*100:.1f}%", f"{pa_ko*100:.1f}%"],
-                    })
-                    st.caption("*Fase KO: no hay empate. Probabilidad incluye posibles penales.*")
-                else:
-                    st.table({
-                        "Resultado":    [f"🏠 {home} gana", "🤝 Empate", f"✈️ {away} gana"],
-                        "Probabilidad": [f"{ph*100:.1f}%", f"{pd_*100:.1f}%", f"{pa*100:.1f}%"],
-                    })
+                    st.caption(
+                        "Mercado de 90 minutos: incluye el tiempo de descuento "
+                        "y excluye prórroga y penales. En eliminatorias, “Empate "
+                        "a 90 min” solo describe cómo se liquida esta apuesta; "
+                        "el cruce continúa hasta definir un clasificado."
+                    )
 
                 st.markdown("**🏆 Contexto — Prob. de ser campeón:**")
                 st.caption(f"{fp(home)}: **{ph_champ}%** | {fp(away)}: **{pa_champ}%**")
@@ -1832,6 +1829,10 @@ with tab_value:
 
             with c2:
                 st.markdown("**🏦 Cuotas de la casa**")
+                st.caption(
+                    "Para que el des-vig sea válido, ingresá las tres cuotas "
+                    "del mismo mercado y de una sola casa."
+                )
 
                 home_odd_key = f"vb_odd_home_{selected_match_id}"
                 draw_odd_key = f"vb_odd_draw_{selected_match_id}"
@@ -1843,14 +1844,21 @@ with tab_value:
                         key=f"load_odds_{selected_match_id}",
                         use_container_width=True,
                     ):
-                        best, commence, msg = get_best_odds(home, away)
+                        best, commence, msg = get_best_odds(
+                            home,
+                            away,
+                            sel_m.get("match_date"),
+                        )
                         if best:
                             st.session_state[home_odd_key] = best.get("odd_home")
                             st.session_state[draw_odd_key] = best.get("odd_draw")
                             st.session_state[away_odd_key] = best.get("odd_away")
                             st.success(f"✅ {msg}")
                         else:
-                            st.warning(msg)
+                            st.session_state.pop(home_odd_key, None)
+                            st.session_state.pop(draw_odd_key, None)
+                            st.session_state.pop(away_odd_key, None)
+                            st.error(msg)
                 else:
                     st.caption(
                         "Sin proveedor de cuotas configurado. Podés ingresar "
@@ -1858,7 +1866,7 @@ with tab_value:
                     )
 
                 oh = st.number_input(
-                    f"Cuota {home} gana",
+                    f"Cuota {home} gana en 90 min",
                     min_value=1.01,
                     max_value=50.0,
                     value=None,
@@ -1867,21 +1875,18 @@ with tab_value:
                     key=home_odd_key,
                 )
 
-                if not is_ko:
-                    od = st.number_input(
-                        "Cuota empate",
-                        min_value=1.01,
-                        max_value=50.0,
-                        value=None,
-                        step=0.05,
-                        placeholder="Ingresá la cuota",
-                        key=draw_odd_key,
-                    )
-                else:
-                    od = None
+                od = st.number_input(
+                    "Cuota empate a 90 min",
+                    min_value=1.01,
+                    max_value=50.0,
+                    value=None,
+                    step=0.05,
+                    placeholder="Ingresá la cuota",
+                    key=draw_odd_key,
+                )
 
                 oa = st.number_input(
-                    f"Cuota {away} gana",
+                    f"Cuota {away} gana en 90 min",
                     min_value=1.01,
                     max_value=50.0,
                     value=None,
@@ -1890,17 +1895,30 @@ with tab_value:
                     key=away_odd_key,
                 )
 
-                edge_min = st.slider(
-                    "Edge mínimo (%)",
+                devig_method = st.selectbox(
+                    "Método para remover el margen",
+                    ["proportional", "shin"],
+                    format_func=lambda value: (
+                        "Proporcional" if value == "proportional" else "Shin"
+                    ),
+                    key=f"devig_{selected_match_id}",
+                )
+                ev_min_pct = st.slider(
+                    "EV real mínimo (%)",
                     1,
                     10,
                     3,
-                    key=f"edge_{selected_match_id}",
+                    key=f"ev_{selected_match_id}",
+                )
+                st.caption(
+                    "Una apuesta se muestra solo cuando probabilidad del "
+                    "modelo × cuota − 1 supera este porcentaje. El método "
+                    "des-vig solo modifica el edge informativo."
                 )
                 odds_ready = (
                     oh is not None
+                    and od is not None
                     and oa is not None
-                    and (is_ko or od is not None)
                 )
                 if not odds_ready:
                     st.caption(
@@ -1914,66 +1932,39 @@ with tab_value:
                     disabled=not odds_ready,
                     key=f"detect_vb_{selected_match_id}",
                 ):
-                    if is_ko:
-                        from models.prediction_engine import (
-                            odd_to_implied_prob, remove_overround,
-                            calculate_edge, calculate_ev, kelly_criterion
-                        )
-                        impl = remove_overround([odd_to_implied_prob(oh), odd_to_implied_prob(oa)])
-                        vbs  = []
-                        for mp, ip, odd, label in [
-                            (ph_ko, impl[0], oh, f"🏠 {home} gana"),
-                            (pa_ko, impl[1], oa, f"✈️ {away} gana"),
-                        ]:
-                            edge = calculate_edge(mp, ip)
-                            ev   = calculate_ev(mp, odd)
-                            if edge >= edge_min:
-                                vbs.append({
-                                    "market":     label,
-                                    "model_prob": round(mp*100,1),
-                                    "impl_prob":  round(ip*100,1),
-                                    "odd":        odd,
-                                    "edge":       edge,
-                                    "ev":         ev,
-                                    "kelly_25":   kelly_criterion(mp, odd),
-                                })
-                    else:
-                        vbs = detect_value_bets((ph, pd_, pa), (oh, od, oa), edge_min)
+                    vbs = detect_value_bets(
+                        (ph, pd_, pa),
+                        (oh, od, oa),
+                        ev_min_pct / 100,
+                        devig_method,
+                    )
 
-                    positive_vbs = [
-                        vb for vb in vbs
-                        if vb.get("edge", 0) > 0
-                    ]
-                    if positive_vbs:
-                        positive_vbs.sort(
-                            key=lambda vb: vb.get("edge", 0),
-                            reverse=True,
-                        )
+                    if vbs:
                         st.success(
-                            f"✅ {len(positive_vbs)} oportunidad(es) "
-                            "con edge positivo"
+                            f"✅ {len(vbs)} oportunidad(es) con EV real "
+                            f"superior a {ev_min_pct}%"
                         )
                         opportunities = pd.DataFrame([{
                             "Mercado": vb.get("market"),
                             "Prob. modelo (%)": vb.get("model_prob"),
                             "Cuota": vb.get("odd"),
-                            "Prob. implícita (%)": vb.get("impl_prob"),
-                            "Edge (%)": vb.get("edge"),
-                            "EV": vb.get("ev"),
-                        } for vb in positive_vbs])
+                            "Prob. mercado sin vig (%)": vb.get("impl_prob"),
+                            "Edge des-vig (pp)": vb.get("edge"),
+                            "EV real (%)": vb.get("ev") * 100,
+                        } for vb in vbs])
                         st.dataframe(
                             opportunities.style.format({
                                 "Prob. modelo (%)": "{:.1f}%",
                                 "Cuota": "{:.2f}",
-                                "Prob. implícita (%)": "{:.1f}%",
-                                "Edge (%)": "+{:.1f}%",
-                                "EV": "{:+.4f}",
+                                "Prob. mercado sin vig (%)": "{:.1f}%",
+                                "Edge des-vig (pp)": "{:+.2f} pp",
+                                "EV real (%)": "{:+.2f}%",
                             }),
                             hide_index=True,
                             use_container_width=True,
                         )
                         if IS_ADMIN:
-                            for vb in positive_vbs:
+                            for vb in vbs:
                                 save_value_bet(
                                     sel_m["id"], vb["market"], vb["market"],
                                     vb["model_prob"]/100,
@@ -1990,8 +1981,8 @@ with tab_value:
                             )
                     else:
                         st.info(
-                            f"No hay oportunidades con edge positivo "
-                            f"por encima del umbral de {edge_min}%."
+                            f"No hay oportunidades con EV real superior "
+                            f"a {ev_min_pct}%."
                         )
 
         st.divider()

@@ -12,6 +12,8 @@ import numpy as np
 from scipy.stats import poisson
 import random
 from collections import defaultdict
+from functools import lru_cache
+from math import sqrt
 
 from data.tournament_data import (
     GROUPS, FIFA_RATINGS, R32_BRACKET_VALID, THIRD_PLACE_SLOTS,
@@ -353,6 +355,24 @@ def match_probabilities_dc(r_home, r_away,
     return p_hw, p_d, p_aw
 
 
+@lru_cache(maxsize=None)
+def knockout_win_probabilities(r_home, r_away,
+                               home_is_host=False, away_is_host=False):
+    """Probabilidad de clasificar con la misma regla usada por Monte Carlo."""
+    p_home, p_draw, p_away = match_probabilities_dc(
+        r_home,
+        r_away,
+        home_is_host,
+        away_is_host,
+    )
+    rating_total = r_home + r_away
+    penalty_home = r_home / rating_total if rating_total > 0 else 0.5
+    home = p_home + p_draw * penalty_home
+    away = p_away + p_draw * (1 - penalty_home)
+    total = home + away
+    return home / total, away / total
+
+
 def over_under_probs(r_home, r_away, home_is_host=False, away_is_host=False):
     lh, la = expected_goals(r_home, r_away, home_is_host, away_is_host)
     probs  = {"over_05":0,"over_15":0,"over_25":0,"over_35":0,"btts":0}
@@ -415,15 +435,13 @@ def sim_ko_match(team_a, team_b, ratings):
     host_a = team_a in HOST_TEAMS
     host_b = team_b in HOST_TEAMS
 
-    lh, la = expected_goals(ra, rb, host_a, host_b)
-    h, a   = sim_score(lh, la)
-
-    if h != a:
-        return team_a if h > a else team_b
-
-    # Empate → penales: probabilidad proporcional al rating
-    pen_prob_a = ra / (ra + rb)
-    return team_a if random.random() < pen_prob_a else team_b
+    win_prob_a, _ = knockout_win_probabilities(
+        ra,
+        rb,
+        host_a,
+        host_b,
+    )
+    return team_a if random.random() < win_prob_a else team_b
 
 
 # ─── SIMULACIÓN DE GRUPOS ────────────────────────────────────────────────────
@@ -760,13 +778,54 @@ def odd_to_implied_prob(odd):
     return 1.0 / odd
 
 
-def remove_overround(implied_probs):
+def remove_overround(implied_probs, method="proportional"):
+    """Remueve margen por normalización proporcional o método de Shin."""
     total = sum(implied_probs)
-    return [p / total for p in implied_probs]
+    if len(implied_probs) < 2 or total <= 0:
+        raise ValueError("Se requieren al menos dos probabilidades positivas")
+
+    method = method.lower().strip()
+    if method == "proportional":
+        return [p / total for p in implied_probs]
+    if method != "shin":
+        raise ValueError(f"Método des-vig desconocido: {method}")
+
+    n = len(implied_probs)
+    if n == 2:
+        difference = implied_probs[0] - implied_probs[1]
+        z = ((total - 1) * (difference**2 - total)) / (
+            total * (difference**2 - 1)
+        )
+    else:
+        z = 0.0
+        for _ in range(1000):
+            previous = z
+            z = (
+                sum(
+                    sqrt(z**2 + 4 * (1 - z) * p**2 / total)
+                    for p in implied_probs
+                )
+                - 2
+            ) / (n - 2)
+            if abs(z - previous) <= 1e-12:
+                break
+        else:
+            raise ValueError("El método de Shin no convergió")
+
+    denominator = 2 * (1 - z)
+    if denominator <= 0:
+        raise ValueError("El método de Shin produjo una solución inválida")
+    probabilities = [
+        (sqrt(z**2 + 4 * (1 - z) * p**2 / total) - z)
+        / denominator
+        for p in implied_probs
+    ]
+    probability_total = sum(probabilities)
+    return [p / probability_total for p in probabilities]
 
 
 def calculate_edge(model_prob, implied_prob):
-    return round((model_prob - implied_prob) * 100, 2)
+    return (model_prob - implied_prob) * 100
 
 
 def calculate_ev(model_prob, odd):
@@ -781,10 +840,12 @@ def kelly_criterion(model_prob, odd, fraction=0.25):
     return max(0.0, round(k * fraction, 4))
 
 
-def detect_value_bets(model_probs_1x2, odds_1x2, min_edge=3.0):
+def detect_value_bets(model_probs_1x2, odds_1x2, min_ev=0.03,
+                      devig_method="proportional"):
+    """Detecta apuestas cuyo EV real supera min_ev (0.03 = 3%)."""
     markets    = ["Local gana (1)", "Empate (X)", "Visitante gana (2)"]
     implied    = [odd_to_implied_prob(o) for o in odds_1x2]
-    impl_clean = remove_overround(implied)
+    impl_clean = remove_overround(implied, method=devig_method)
 
     vbs = []
     for i, market in enumerate(markets):
@@ -792,15 +853,16 @@ def detect_value_bets(model_probs_1x2, odds_1x2, min_edge=3.0):
         ip   = impl_clean[i]
         odd  = odds_1x2[i]
         edge = calculate_edge(mp, ip)
+        ev_raw = mp * odd - 1
         ev   = calculate_ev(mp, odd)
-        if edge >= min_edge:
+        if ev_raw > min_ev:
             vbs.append({
                 "market":     market,
                 "model_prob": round(mp * 100, 1),
                 "impl_prob":  round(ip * 100, 1),
                 "odd":        odd,
-                "edge":       edge,
+                "edge":       round(edge, 2),
                 "ev":         ev,
                 "kelly_25":   kelly_criterion(mp, odd),
             })
-    return sorted(vbs, key=lambda x: x["edge"], reverse=True)
+    return sorted(vbs, key=lambda x: x["ev"], reverse=True)

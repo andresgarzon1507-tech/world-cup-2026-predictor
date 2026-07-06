@@ -10,8 +10,12 @@
 #    ODDS_API_KEY=tu_key_aqui
 
 import os
+from datetime import datetime
+
 import requests
 from dotenv import load_dotenv
+
+from models.espn_parser import normalize_team_name
 
 load_dotenv()
 
@@ -97,34 +101,92 @@ def get_live_odds(markets="h2h"):
     return matches, msg
 
 
-def get_best_odds(home_team, away_team):
+def _parse_event_date(value):
+    """Convierte fechas ISO de la app/API a date; None si no es válida."""
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(
+            str(value).replace("Z", "+00:00")
+        ).date()
+    except (TypeError, ValueError):
+        return None
+
+
+def get_best_odds(home_team, away_team, match_date=None):
     """
     Busca las mejores cuotas disponibles para un partido específico.
-    Retorna las cuotas más altas entre todas las casas (mejor valor).
+    Retorna el mercado 1X2 completo de una sola casa con menor overround.
     """
     matches, msg = get_live_odds()
     
-    for m in matches:
-        if (home_team.lower() in m["home_team"].lower() or
-            away_team.lower() in m["away_team"].lower()):
-            
-            best = {"odd_home": 0, "odd_draw": 0, "odd_away": 0,
-                    "bm_home": "", "bm_draw": "", "bm_away": ""}
-            
-            for bm in m["bookmakers"]:
-                if bm["odd_home"] and bm["odd_home"] > best["odd_home"]:
-                    best["odd_home"] = bm["odd_home"]
-                    best["bm_home"]  = bm["name"]
-                if bm["odd_draw"] and bm["odd_draw"] > best["odd_draw"]:
-                    best["odd_draw"] = bm["odd_draw"]
-                    best["bm_draw"]  = bm["name"]
-                if bm["odd_away"] and bm["odd_away"] > best["odd_away"]:
-                    best["odd_away"] = bm["odd_away"]
-                    best["bm_away"]  = bm["name"]
-            
-            return best, m["commence"], msg
-    
-    return None, None, f"Partido no encontrado en la API. {msg}"
+    candidates = [
+        m for m in matches
+        if normalize_team_name(home_team)
+        == normalize_team_name(m.get("home_team"))
+        and normalize_team_name(away_team)
+        == normalize_team_name(m.get("away_team"))
+    ]
+
+    if match_date:
+        expected_date = _parse_event_date(match_date)
+        if expected_date is None:
+            return None, None, (
+                f"Fecha inválida para {home_team} vs {away_team}: "
+                f"{match_date}."
+            )
+        candidates = [
+            m for m in candidates
+            if _parse_event_date(m.get("commence")) == expected_date
+        ]
+
+    if not candidates:
+        date_detail = f" en la fecha {match_date}" if match_date else ""
+        return None, None, (
+            f"No se encontraron cuotas para {home_team} vs {away_team}"
+            f"{date_detail}."
+        )
+
+    if len(candidates) > 1:
+        return None, None, (
+            f"Se encontraron múltiples eventos para {home_team} vs "
+            f"{away_team}; no se pueden seleccionar cuotas con seguridad."
+        )
+
+    match = candidates[0]
+    complete_markets = [
+        bm for bm in match["bookmakers"]
+        if all(bm.get(key) for key in ("odd_home", "odd_draw", "odd_away"))
+    ]
+    if not complete_markets:
+        return None, None, (
+            f"No hay un mercado 1X2 completo de una sola casa para "
+            f"{home_team} vs {away_team}."
+        )
+
+    def market_overround(bookmaker):
+        return sum(
+            1.0 / bookmaker[key]
+            for key in ("odd_home", "odd_draw", "odd_away")
+        )
+
+    selected = min(complete_markets, key=market_overround)
+    overround = market_overround(selected)
+    best = {
+        "odd_home": selected["odd_home"],
+        "odd_draw": selected["odd_draw"],
+        "odd_away": selected["odd_away"],
+        "bm_home": selected["name"],
+        "bm_draw": selected["name"],
+        "bm_away": selected["name"],
+        "bookmaker": selected["name"],
+        "overround": overround,
+    }
+    market_msg = (
+        f"{msg} Mercado de {selected['name']} · "
+        f"overround {(overround - 1) * 100:+.2f}%."
+    )
+    return best, match["commence"], market_msg
 
 
 def get_remaining_requests():
