@@ -518,15 +518,15 @@
       "match_number": 1,
       "home_team": "Francia",
       "away_team": "España",
-      "home_goals": null,
-      "away_goals": null,
-      "played": 0,
+      "home_goals": 0,
+      "away_goals": 2,
+      "played": 1,
       "match_date": null,
       "venue": null,
       "created_at": "2026-06-29 15:56:51",
-      "updated_at": "2026-07-11 17:54:07",
-      "winner_team": null,
-      "decided_by": null
+      "updated_at": "2026-07-14 21:16:48",
+      "winner_team": "España",
+      "decided_by": "regular"
     },
     {
       "id": 1114,
@@ -574,7 +574,7 @@
       "phase": "final",
       "group_letter": null,
       "match_number": 1,
-      "home_team": "",
+      "home_team": "España",
       "away_team": "",
       "home_goals": null,
       "away_goals": null,
@@ -582,7 +582,7 @@
       "match_date": null,
       "venue": null,
       "created_at": "2026-06-29 15:56:51",
-      "updated_at": "2026-06-29 15:56:51",
+      "updated_at": "2026-07-14 21:16:49",
       "winner_team": null,
       "decided_by": null
     }
